@@ -1,0 +1,121 @@
+/**
+ * Cookie Service
+ * Manages premium cookies and user session cookies
+ */
+import { decryptCookieValue } from './encryptionService.js';
+import { getDataFromApiWithoutVerify } from './apiService.js';
+import { getCache, setCache } from './cacheService.js';
+import { parseCookieString } from '../utils/helpers.js';
+import { COOKIE_CACHE_TTL_SECONDS, COOKIE_EXPIRATION_HOURS } from '../utils/constants.js';
+import { isExpired } from '../utils/helpers.js';
+
+/**
+ * Get premium cookies for a product (with caching)
+ */
+export async function getPremiumCookies(prefix, index = 0, includeProxy = false) {
+  // Check cache first
+  const cacheKey = `${prefix}_${index}`;
+  const cached = getCache('premiumCookies', cacheKey);
+  
+  if (cached) {
+    return {
+      cookies: cached.cookies,
+      proxy: includeProxy ? cached.proxy : null
+    };
+  }
+
+  // Fetch from API
+  try {
+    const data = await getDataFromApiWithoutVerify(prefix);
+
+    const cookiesStr = data.access_configuration_preferences[0].accounts[index];
+    
+    // Parse cookies
+    const cookies = parseCookieString(cookiesStr);
+
+    // Get proxy (if available)
+    let proxy = null;
+    try {
+      proxy = data.access_configuration_preferences[1].proxies[0];
+    } catch {
+      // No proxy available
+    }
+
+    // Cache the result
+    setCache('premiumCookies', cacheKey, { cookies, proxy }, COOKIE_CACHE_TTL_SECONDS);
+
+    return {
+      cookies,
+      proxy: includeProxy ? proxy : null
+    };
+  } catch (error) {
+    console.error('❌ Error getting premium cookies:', error.message);
+    throw error;
+  }
+}
+
+/**
+ * Decrypt all user cookies from request
+ */
+export async function decryptUserCookies(req) {
+  const rawAuthToken = req.cookies.auth_token;
+  const rawPrefix = req.cookies.prefix;
+  const product = req.cookies.product;
+  const site = req.cookies.site;
+  const userEmail = req.cookies.user_email;
+  const timeStampRaw = req.cookies.ttl;
+
+  // Validate required cookies
+  if (!rawAuthToken || !rawPrefix || !product || !site || !timeStampRaw) {
+    return { redirect: '/expired' };
+  }
+
+  // Decrypt and validate timestamp
+  try {
+    const timeStampDec = decryptCookieValue(timeStampRaw);
+    const timeStampInt = parseInt(timeStampDec, 10);
+
+    if (isExpired(timeStampInt, COOKIE_EXPIRATION_HOURS)) {
+      // Session expired
+      return { redirect: '/expired' };
+    }
+  } catch (error) {
+    console.error('❌ Error decrypting timestamp:', error.message);
+    return { redirect: '/expired' };
+  }
+
+  // Check cache
+  const cacheKey = JSON.stringify([rawAuthToken, rawPrefix, product, site, timeStampRaw]);
+  const cached = getCache('decryptedSessions', cacheKey);
+  
+  if (cached) {
+    return cached;
+  }
+
+  // Decrypt all cookies
+  try {
+    const authToken = decryptCookieValue(rawAuthToken);
+    const prefix = decryptCookieValue(rawPrefix);
+    const productDec = decryptCookieValue(product);
+    const siteDec = decryptCookieValue(site);
+    const userEmailDec = userEmail ? decryptCookieValue(userEmail) : null;
+
+    const decryptedCookies = {
+      auth_token: authToken,
+      prefix: prefix,
+      product: productDec,
+      site: siteDec,
+      user_email: userEmailDec
+    };
+
+    // Cache the result
+    if (COOKIE_CACHE_TTL_SECONDS > 0) {
+      setCache('decryptedSessions', cacheKey, decryptedCookies, COOKIE_CACHE_TTL_SECONDS);
+    }
+
+    return decryptedCookies;
+  } catch (error) {
+    console.error('❌ Error decrypting user cookies:', error.message);
+    return { redirect: '/expired' };
+  }
+}
