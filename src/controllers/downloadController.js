@@ -23,7 +23,21 @@ export async function showLimitReachedPage(req, res, productName, plan = 'defaul
       return res.status(429).send('Daily download limit reached. Please try again tomorrow.');
     }
     
-    return res.sendFile(viewsPath);
+    // Read the HTML template
+    let html = fs.readFileSync(viewsPath, 'utf-8');
+    
+    // Get the limit for this plan
+    const dailyLimit = DOWNLOAD_LIMITS[plan] || DOWNLOAD_LIMITS.default;
+    
+    // Replace template variables
+    html = html.replace(/\{\{daily_limit\}\}/g, dailyLimit);
+    html = html.replace(/\{\{APP_NAME\}\}/g, 'ToolsZilla');
+    html = html.replace(/<title>Daily Usage Limit Reached - .*?<\/title>/g, 
+      `<title>Daily Usage Limit Reached - ${productName}</title>`);
+    
+    // Send the processed HTML
+    return res.status(429).send(html);
+    
   } catch (error) {
     console.error('❌ Error showing limit reached page:', error.message);
     return res.status(429).send('Daily download limit reached. Please try again tomorrow.');

@@ -19,11 +19,10 @@ export async function makeProxyRequest(url, method, cookies, headers, proxy = nu
         'Cookie': cookiesToString(cookies)
       },
       responseType: 'arraybuffer',
-      validateStatus: () => true, // Don't throw on any status
-      maxRedirects: 0 // Handle redirects manually
+      validateStatus: () => true,
+      maxRedirects: 0
     };
 
-    // Add proxy if provided
     if (proxy) {
       const [host, port] = proxy.split(':');
       config.proxy = {
@@ -32,7 +31,6 @@ export async function makeProxyRequest(url, method, cookies, headers, proxy = nu
       };
     }
 
-    // Add body data for POST/PUT/PATCH
     if (data && ['POST', 'PUT', 'PATCH'].includes(method.toUpperCase())) {
       config.data = data;
     }
@@ -45,7 +43,6 @@ export async function makeProxyRequest(url, method, cookies, headers, proxy = nu
       data: Buffer.from(response.data)
     };
   } catch (error) {
-    // Handle redirect errors (302, 301)
     if (error.response && (error.response.status === 302 || error.response.status === 301)) {
       return {
         status: error.response.status,
@@ -61,19 +58,50 @@ export async function makeProxyRequest(url, method, cookies, headers, proxy = nu
 }
 
 /**
- * Replace domains in content
+ * Replace domains in content - FIXED VERSION
  */
 export function replaceDomains(content, targetDomain, proxyHost, replaceRules = []) {
   let modifiedContent = content;
 
-  // Replace target domain with proxy host
-  const domainRegex = new RegExp(targetDomain, 'g');
-  modifiedContent = modifiedContent.replace(domainRegex, proxyHost);
+  // Escape special regex characters in domain
+  const escapedDomain = targetDomain.replace(/\./g, '\\.');
+  
+  // Replace target domain (preserve protocol)
+  modifiedContent = modifiedContent.replace(
+    new RegExp(`https://${escapedDomain}`, 'g'), 
+    proxyHost.startsWith('http') ? proxyHost : `http://${proxyHost}`
+  );
+  modifiedContent = modifiedContent.replace(
+    new RegExp(`http://${escapedDomain}`, 'g'), 
+    proxyHost.startsWith('http') ? proxyHost : `http://${proxyHost}`
+  );
+  
+  // Replace protocol-relative URLs (//domain.com)
+  modifiedContent = modifiedContent.replace(
+    new RegExp(`//${escapedDomain}`, 'g'), 
+    `//${proxyHost.replace(/^https?:\/\//, '')}`
+  );
 
   // Apply custom replace rules
   for (const [find, replace] of replaceRules) {
-    const regex = new RegExp(find, 'g');
-    modifiedContent = modifiedContent.replace(regex, replace);
+    const escapedFind = find.replace(/\./g, '\\.');
+    const replaceWith = replace.replace('{HOST}', proxyHost.startsWith('http') ? proxyHost : `http://${proxyHost}`);
+    
+    // Replace with protocol
+    modifiedContent = modifiedContent.replace(
+      new RegExp(`https://${escapedFind}`, 'g'), 
+      replaceWith.startsWith('http') ? replaceWith : `http://${replaceWith}`
+    );
+    modifiedContent = modifiedContent.replace(
+      new RegExp(`http://${escapedFind}`, 'g'), 
+      replaceWith.startsWith('http') ? replaceWith : `http://${replaceWith}`
+    );
+    
+    // Replace protocol-relative URLs
+    modifiedContent = modifiedContent.replace(
+      new RegExp(`//${escapedFind}`, 'g'), 
+      `//${replaceWith.replace(/^https?:\/\//, '')}`
+    );
   }
 
   return modifiedContent;
@@ -83,16 +111,11 @@ export function replaceDomains(content, targetDomain, proxyHost, replaceRules = 
  * Process proxy response (apply replacements if text)
  */
 export function processProxyResponse(responseData, lowerPath, contentType, targetDomain, proxyHost, replaceRules = []) {
-  // Check if content should be processed as text
   if (shouldDecodeAsText(lowerPath, contentType)) {
     let textContent = responseData.toString('utf-8');
-    
-    // Apply replacements
     textContent = replaceDomains(textContent, targetDomain, proxyHost, replaceRules);
-    
     return Buffer.from(textContent, 'utf-8');
   }
 
-  // Return binary content as-is
   return responseData;
 }

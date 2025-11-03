@@ -6,6 +6,9 @@ import express from 'express';
 import authRoutes from './authRoutes.js';
 import adminRoutes from './adminRoutes.js';
 import flaticonRoutes from './products/flaticonRoutes.js';
+import { handleMediaProxy } from '../controllers/proxyController.js';
+import { showLimitReachedPage } from '../controllers/downloadController.js'; // ✅ ADD THIS
+import flaticonConfig from '../../products/flaticon.js';
 
 const router = express.Router();
 
@@ -40,8 +43,8 @@ router.get('/setup-session', (req, res) => {
   // Cookie options
   const cookieOptions = {
     httpOnly: true,
-    secure: false, // Set to true in production with HTTPS
-    maxAge: 3600000, // 1 hour
+    secure: false,
+    maxAge: 3600000,
     path: '/',
     sameSite: 'lax'
   };
@@ -60,11 +63,9 @@ router.get('/setup-session', (req, res) => {
 
   console.log('✅ Cookies set successfully');
   
-  // Use product name for redirect (not prefix which is user identifier)
   const productName = product || 'flaticon';
   console.log(`🔀 Redirecting to: /${productName}`);
 
-  // Redirect to product
   return res.redirect(`/${productName}`);
 });
 
@@ -77,11 +78,26 @@ router.get('/health', (req, res) => {
   });
 });
 
+// ============================================
+// LIMIT REACHED PAGE (GLOBAL) ✅ ADD THIS
+// ============================================
+router.get('/limit-reached', (req, res) => {
+  const productName = req.query.product || 'Flaticon';
+  const planType = req.query.plan || 'default';
+  console.log(`⚠️ Showing limit reached page for ${productName} (${planType} plan)`);
+  return showLimitReachedPage(req, res, productName, planType);
+});
+
 // Auth routes
 router.use('/', authRoutes);
 
 // Admin routes
 router.use('/admin', adminRoutes);
+
+// Media proxy route (MUST BE BEFORE PRODUCT ROUTES)
+router.use('/media', (req, res) => {
+  return handleMediaProxy(req, res, flaticonConfig, 'media.flaticon.com');
+});
 
 // Product routes (MUST BE LAST)
 router.use('/flaticon', flaticonRoutes);

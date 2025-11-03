@@ -4,7 +4,7 @@
  */
 import express from 'express';
 import flaticonConfig from '../../../products/flaticon.js';
-import { handleProxyRequest, handleMediaProxy } from '../../controllers/proxyController.js';
+import { handleProxyRequest } from '../../controllers/proxyController.js';
 import { showLimitReachedPage } from '../../controllers/downloadController.js';
 import { 
   processFlatIconPackDownload, 
@@ -16,11 +16,6 @@ const router = express.Router();
 // Limit reached page
 router.get('/limit-reached', (req, res) => {
   return showLimitReachedPage(req, res, flaticonConfig.displayName, 'default');
-});
-
-// Media proxy (for media.flaticon.com)
-router.use('/media', (req, res) => {
-  return handleMediaProxy(req, res, flaticonConfig, 'media.flaticon.com');
 });
 
 // Pack download (POST) - with limit check

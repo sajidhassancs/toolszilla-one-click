@@ -5,7 +5,7 @@
 import axios from 'axios';
 import { decryptUserCookies, getPremiumCookies } from '../../../services/cookieService.js';
 import { checkDownloadPermission, recordDownloadAction } from '../../../controllers/downloadController.js';
-import { getDataFromApi } from '../../../services/apiService.js';
+import { getDataFromApi, getDataFromApiWithoutVerify } from '../../../services/apiService.js'; // ✅ CHANGE: Added getDataFromApiWithoutVerify
 import { parseCookieString, cookiesToString } from '../../../utils/helpers.js';
 import { USER_AGENT } from '../../../utils/constants.js';
 import flaticonConfig from '../../../../products/flaticon.js';
@@ -140,7 +140,9 @@ export async function processFlatIconPackDownload(req, res) {
 
 /**
  * Process individual icon download
- * GET request to download/icon endpoints, extracts format/icon_id from URL params
+ */
+/**
+ * Process individual icon download
  */
 export async function processFlatIconIconDownload(req, res) {
   try {
@@ -154,10 +156,9 @@ export async function processFlatIconIconDownload(req, res) {
     }
 
     const prefix = userData.prefix;
-    const authToken = userData.auth_token;
 
-    if (!prefix || !authToken) {
-      console.log('❌ Missing user data');
+    if (!prefix) {
+      console.log('❌ Missing prefix');
       return res.redirect('/expired');
     }
 
@@ -167,14 +168,52 @@ export async function processFlatIconIconDownload(req, res) {
 
     console.log(`📥 Downloading icon: ${iconId}.${format}`);
 
-    // Get premium cookies from API
-    const apiData = await getDataFromApi(authToken, prefix);
+    // Get premium cookies WITHOUT verification
+    const apiData = await getDataFromApiWithoutVerify(prefix);
 
-    const cookiesArray = apiData.access_configuration_preferences[0].accounts[0];
+    // Handle both string and array formats
+    let cookiesArray = apiData.access_configuration_preferences[0].accounts[0];
+    
+    if (typeof cookiesArray === 'string') {
+      console.log('⚠️  Cookies stored as string, parsing...');
+      cookiesArray = JSON.parse(cookiesArray);
+    }
+    
+    console.log('🍪 Cookies type:', Array.isArray(cookiesArray) ? 'Array' : typeof cookiesArray);
+    
     const proxyAddress = apiData.access_configuration_preferences[1]?.proxies?.[0];
 
-    // Parse cookies
-    const cookies = parseCookieString(cookiesArray);
+    // Convert cookie objects to cookie string format
+    let cookieString;
+    
+    if (Array.isArray(cookiesArray)) {
+      cookieString = cookiesArray
+        .map(cookie => `${cookie.name}=${cookie.value}`)
+        .join('; ');
+      console.log('✅ Built cookie string from array');
+    } else if (typeof cookiesArray === 'string') {
+      const cookies = parseCookieString(cookiesArray);
+      cookieString = cookiesToString(cookies);
+      console.log('✅ Used parseCookieString');
+    } else {
+      throw new Error('Invalid cookie format');
+    }
+
+    // ✅ FIX: Remove /flaticon prefix from URL
+    let cleanPath = req.originalUrl;
+    const productPrefix = `/${flaticonConfig.name}`;
+    
+    if (cleanPath.startsWith(productPrefix)) {
+      cleanPath = cleanPath.substring(productPrefix.length);
+    }
+    
+    console.log('🔧 Original URL:', req.originalUrl);
+    console.log('🔧 Clean path:', cleanPath);
+
+    // Build upstream URL with clean path
+    let upstreamUrl = `https://${flaticonConfig.domain}${cleanPath}`;
+
+    console.log('🎯 Icon download URL:', upstreamUrl);
 
     // Setup headers
     const flaticonHeaders = {
@@ -182,13 +221,8 @@ export async function processFlatIconIconDownload(req, res) {
       'accept-language': 'en-GB,en-US;q=0.9,en;q=0.8',
       'referer': `https://${flaticonConfig.domain}/`,
       'user-agent': USER_AGENT,
-      'Cookie': cookiesToString(cookies)
+      'Cookie': cookieString
     };
-
-    // Build upstream URL
-    let upstreamUrl = `https://${flaticonConfig.domain}${req.originalUrl}`;
-
-    console.log('🎯 Icon download URL:', upstreamUrl);
 
     // Make request
     const axiosConfig = {
@@ -210,6 +244,14 @@ export async function processFlatIconIconDownload(req, res) {
 
     const response = await axios(axiosConfig);
 
+    console.log('✅ Icon download response status:', response.status);
+    console.log('📦 Response headers:', response.headers);
+
+    if (response.status === 404) {
+      console.error('❌ Icon not found on Flaticon');
+      return res.status(404).send('Icon not found');
+    }
+
     // Determine filename
     const filename = `flaticon_${iconId}.${format}`;
 
@@ -222,6 +264,7 @@ export async function processFlatIconIconDownload(req, res) {
 
   } catch (error) {
     console.error('❌ Error in Flaticon icon download:', error.message);
+    console.error('   Stack:', error.stack);
     return res.status(500).json({ 
       error: 'Icon download failed',
       message: error.message 

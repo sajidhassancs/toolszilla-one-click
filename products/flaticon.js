@@ -10,7 +10,7 @@ export default {
   domain: 'www.flaticon.com',
   
   // Redirect path after login
-  redirectPath: '/',  // ← CHANGED: Just go to homepage
+  redirectPath: '/',
   
   // Banned paths (users cannot access these)
   bannedPaths: ['admin', 'config', 'settings'],
@@ -22,8 +22,9 @@ export default {
   useExternalProxy: false,
   
   // Domain replacement rules [find, replace]
+  // These are used to rewrite URLs in HTML/CSS/JS
   replaceRules: [
-    ['media.flaticon.com', '{HOST}/media']
+    ['media.flaticon.com', 'localhost:8224/media']
   ],
   
   // Custom headers for requests
