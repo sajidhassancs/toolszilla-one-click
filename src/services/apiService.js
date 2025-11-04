@@ -48,7 +48,7 @@ export async function getDataFromApiWithoutVerify(prefix) {
       `${API_URL}/oneclick/access_without_verify/${prefix}`,
       {
         headers: { Authorization: API_KEY }
-      }
+      } 
     );
     
     console.log('✅ API Response:', JSON.stringify(response.data, null, 2));

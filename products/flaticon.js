@@ -12,8 +12,8 @@ export default {
   // Redirect path after login
   redirectPath: '/',
   
-  // Banned paths (users cannot access these)
-  bannedPaths: ['admin', 'config', 'settings'],
+  // Banned paths (product-specific, env vars will also apply)
+  bannedPaths: [],  // ✅ Empty - we're using BANNED_URL_PATHS from .env
   
   // Proxy port (if running standalone)
   proxyPort: 8224,
@@ -22,7 +22,6 @@ export default {
   useExternalProxy: false,
   
   // Domain replacement rules [find, replace]
-  // These are used to rewrite URLs in HTML/CSS/JS
   replaceRules: [
     ['media.flaticon.com', 'localhost:8224/media']
   ],

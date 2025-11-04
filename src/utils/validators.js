@@ -34,12 +34,37 @@ export function validateAdminCredentials(username, password, validUsername, vali
 
 /**
  * Check if path is banned
+ * @param {string} path - The URL path to check
+ * @param {Array<string>} bannedPaths - Array of banned path segments from product config
+ * @returns {boolean} - True if path is banned
  */
 export function isPathBanned(path, bannedPaths) {
-  const pathParts = path.split('/').filter(p => p);
+  // Get banned paths from environment variable
+  const envBannedPaths = (process.env.BANNED_URL_PATHS || '')
+    .split(',')
+    .map(p => p.trim().toLowerCase())
+    .filter(p => p.length > 0);
   
-  for (const bannedPath of bannedPaths) {
-    if (pathParts.includes(bannedPath)) {
+  // Combine product-specific banned paths with env banned paths
+  const allBannedPaths = [...bannedPaths, ...envBannedPaths];
+  
+  // Normalize the path
+  const lowerPath = path.toLowerCase().trim();
+  const pathParts = lowerPath.split('/').filter(p => p);
+  
+  // Check each banned path
+  for (const bannedPath of allBannedPaths) {
+    const bannedLower = bannedPath.toLowerCase().trim();
+    
+    // Check if any path segment matches the banned path
+    if (pathParts.includes(bannedLower)) {
+      console.log(`🚫 Blocked: Path "${path}" contains banned segment "${bannedPath}"`);
+      return true;
+    }
+    
+    // Also check if the path starts with the banned path
+    if (lowerPath === `/${bannedLower}` || lowerPath.startsWith(`/${bannedLower}/`)) {
+      console.log(`🚫 Blocked: Path "${path}" starts with banned path "${bannedPath}"`);
       return true;
     }
   }

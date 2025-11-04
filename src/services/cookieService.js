@@ -2,6 +2,7 @@
  * Cookie Service
  * Manages premium cookies and user session cookies
  */
+import axios from 'axios';
 import { decryptCookieValue } from './encryptionService.js';
 import { getDataFromApiWithoutVerify } from './apiService.js';
 import { getCache, setCache } from './cacheService.js';
@@ -84,21 +85,22 @@ export async function decryptUserCookies(req) {
     return { redirect: '/expired' };
   }
 
-  // Check cache
-  const cacheKey = JSON.stringify([rawAuthToken, rawPrefix, product, site, timeStampRaw]);
-  const cached = getCache('decryptedSessions', cacheKey);
-  
-  if (cached) {
-    return cached;
-  }
-
-  // Decrypt all cookies
+  // Decrypt all cookies first
   try {
     const authToken = decryptCookieValue(rawAuthToken);
     const prefix = decryptCookieValue(rawPrefix);
     const productDec = decryptCookieValue(product);
     const siteDec = decryptCookieValue(site);
     const userEmailDec = userEmail ? decryptCookieValue(userEmail) : null;
+
+    // ✅ CHECK DASHBOARD SESSION - Re-enabled
+    if (userEmailDec && authToken) {
+      const isValid = await checkDashboardSession(userEmailDec, authToken);
+      if (!isValid) {
+        console.log('⚠️ Session invalidated by dashboard:', userEmailDec);
+        return { redirect: '/expired' };
+      }
+    }
 
     const decryptedCookies = {
       auth_token: authToken,
@@ -108,9 +110,9 @@ export async function decryptUserCookies(req) {
       user_email: userEmailDec
     };
 
-    // Cache the result
+    // Cache the result (30 seconds max)
     if (COOKIE_CACHE_TTL_SECONDS > 0) {
-      setCache('decryptedSessions', cacheKey, decryptedCookies, COOKIE_CACHE_TTL_SECONDS);
+      setCache('decryptedSessions', JSON.stringify([rawAuthToken, rawPrefix, product, site, timeStampRaw]), decryptedCookies, Math.min(COOKIE_CACHE_TTL_SECONDS, 30));
     }
 
     return decryptedCookies;
@@ -119,3 +121,47 @@ export async function decryptUserCookies(req) {
     return { redirect: '/expired' };
   }
 }
+
+// ✅ Check dashboard session using oneclick session-check endpoint
+async function checkDashboardSession(email, authToken) {
+  try {
+    console.log('🔍 Checking dashboard session for:', email);
+    
+    const url = `${process.env.DASHBOARD_URL}/api/oneclick/session-check`;
+    console.log('📞 Calling:', url);
+    
+    const response = await axios.post(url, {
+      email: email  // ✅ CHANGED: Send email in body
+    }, {
+      headers: {
+        'Content-Type': 'application/json'
+        // ✅ REMOVED: Authorization header
+      },
+      timeout: 3000,
+      validateStatus: () => true
+    });
+
+    console.log('📡 Response:', {
+      status: response.status,
+      data: response.data
+    });
+
+    // Check if response is valid JSON
+    if (typeof response.data !== 'object') {
+      console.error('❌ Invalid response format (not JSON)');
+      return false;
+    }
+
+    const isValid = response.data.valid === true && 
+                   response.data.email === email;
+
+    console.log(isValid ? '✅ Session valid' : '❌ Session invalid');
+    
+    return isValid;
+
+  } catch (error) {
+    console.error('⚠️ Dashboard validation failed:', error.message);
+    return false;
+  }
+}
+ 
