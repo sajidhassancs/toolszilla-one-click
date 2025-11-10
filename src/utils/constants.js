@@ -86,7 +86,7 @@ export const COOKIE_ENCRYPTION_KEY = process.env.COOKIE_ENCRYPTION_KEY;
 // Banned URL Paths
 export const BANNED_URL_PATHS = process.env.BANNED_URL_PATHS || '';
 
-// MIME Types Mapping
+// MIME Types Mapping 
 export const MIME_TYPES = {
   '.html': 'text/html',
   '.htm': 'text/html',

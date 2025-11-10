@@ -5,15 +5,21 @@
 import axios from 'axios';
 import { decryptUserCookies, getPremiumCookies } from '../../../services/cookieService.js';
 import { checkDownloadPermission, recordDownloadAction } from '../../../controllers/downloadController.js';
-import { getDataFromApi, getDataFromApiWithoutVerify } from '../../../services/apiService.js'; // ✅ CHANGE: Added getDataFromApiWithoutVerify
+import { getDataFromApi, getDataFromApiWithoutVerify } from '../../../services/apiService.js';
 import { parseCookieString, cookiesToString } from '../../../utils/helpers.js';
 import { USER_AGENT } from '../../../utils/constants.js';
 import flaticonConfig from '../../../../products/flaticon.js';
+// ✅ ADD THIS IMPORT
+import { proxyWithPuppeteer } from './puppeteerProxy.js';
 
+// ✅ ADD THIS NEW FUNCTION FOR BROWSING
 /**
- * Process Flaticon pack download
- * POST request to download-pack endpoint, checks for 302 redirect, records download on success
+ * Main Flaticon proxy handler using Puppeteer
+ * Used for browsing pages (not downloads)
  */
+export async function proxyFlaticonWithPuppeteer(req, res) {
+  return await proxyWithPuppeteer(req, res, flaticonConfig);
+}
 export async function processFlatIconPackDownload(req, res) {
   try {
     console.log('📦 Flaticon pack download request');

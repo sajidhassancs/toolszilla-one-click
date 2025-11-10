@@ -18,7 +18,13 @@ const __dirname = path.dirname(__filename);
 
 // Create Express app
 const app = express();
-
+// 🔍 DEBUG: Log ALL incoming requests before ANY middleware
+app.use((req, res, next) => {
+  if (req.path.includes('/images/')) {
+    console.log('🖼️ [RAW APP.JS] Image request detected:', req.method, req.url, '| Path:', req.path);
+  }
+  next();
+});
 // Trust proxy (for getting real IP behind load balancers)
 app.set('trust proxy', true);
 

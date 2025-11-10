@@ -97,7 +97,8 @@ export async function handleProxyRequest(req, res, productConfig) {
           {
             'accept': '*/*',
             'referer': `https://${productConfig.domain}/`,
-            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'origin': `https://${productConfig.domain}`
           },
           proxy,
           null
@@ -113,6 +114,12 @@ export async function handleProxyRequest(req, res, productConfig) {
         }
 
         const contentType = response.headers['content-type'] || 'application/octet-stream';
+        
+        // ✅ ADD CORS HEADERS
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', '*');
+        res.setHeader('Cache-Control', 'public, max-age=31536000');
         
         // For CSS/JS files, replace domains
         if (contentType.includes('text/css') || contentType.includes('javascript')) {
@@ -192,6 +199,27 @@ export async function handleProxyRequest(req, res, productConfig) {
       `http://${req.get('host')}${productPrefix}`,
       productConfig.replaceRules || []
     );
+
+    // ✅ REWRITE ASSET URLs FOR PRODUCTS WITH assetDomains CONFIG
+    if (productConfig.assetDomains && contentType.includes('text/html')) {
+      console.log('🔧 Rewriting asset URLs for', productConfig.name);
+      let htmlContent = processedData.toString('utf-8');
+      
+      for (const assetDomain of productConfig.assetDomains) {
+        const fromDomain = assetDomain.from;
+        const toPath = assetDomain.to;
+        
+        // Replace https://domain with http://localhost:8224/product/path
+        htmlContent = htmlContent.replace(
+          new RegExp(`https://${fromDomain.replace(/\./g, '\\.')}`, 'g'),
+          `http://${req.get('host')}${productPrefix}${toPath}`
+        );
+        
+        console.log(`   ✅ Rewritten: ${fromDomain} → ${productPrefix}${toPath}`);
+      }
+      
+      return res.status(response.status).type(contentType).send(htmlContent);
+    }
 
     console.log('✅ Sending processed response');
     return res.status(response.status).type(contentType).send(processedData);

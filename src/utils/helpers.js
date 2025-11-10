@@ -63,24 +63,72 @@ export function isExpired(timestamp, expirationHours) {
 export function parseCookieString(cookiesStr) {
   const cookies = {};
   
-  try {
-    // Try parsing as JSON array first
-    const cookiesArray = JSON.parse(cookiesStr);
-    for (const cookie of cookiesArray) {
-      cookies[cookie.name] = cookie.value;
-    }
+  // Handle null/undefined
+  if (!cookiesStr) {
+    console.error('❌ Empty cookie string provided');
     return cookies;
-  } catch {
-    // Parse as key=value pairs
-    const parts = cookiesStr.split('; ');
+  }
+
+  // If it's already an object, return as-is
+  if (typeof cookiesStr === 'object' && !Array.isArray(cookiesStr)) {
+    return cookiesStr;
+  }
+
+  // If it's an array already (parsed JSON)
+  if (Array.isArray(cookiesStr)) {
+    console.log('📋 Parsing cookie array');
+    for (const cookie of cookiesStr) {
+      if (cookie && cookie.name) {
+        cookies[cookie.name] = cookie.value;
+      }
+    }
+    console.log(`✅ Parsed ${Object.keys(cookies).length} cookies from array`);
+    return cookies;
+  }
+
+  // It's a string - try to parse as JSON first
+  if (typeof cookiesStr === 'string') {
+    const trimmed = cookiesStr.trim();
+    
+    // Check if it looks like JSON
+    if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+      try {
+        console.log('📋 Attempting to parse as JSON...');
+        const parsed = JSON.parse(trimmed);
+        
+        if (Array.isArray(parsed)) {
+          console.log(`✅ Successfully parsed JSON array with ${parsed.length} cookies`);
+          for (const cookie of parsed) {
+            if (cookie && cookie.name) {
+              cookies[cookie.name] = cookie.value;
+            }
+          }
+          return cookies;
+        } else if (typeof parsed === 'object') {
+          console.log('✅ Successfully parsed JSON object');
+          return parsed;
+        }
+      } catch (error) {
+        console.error('❌ Failed to parse JSON cookies:', error.message);
+        // Fall through to header string parsing
+      }
+    }
+
+    // Parse as header string format (cookie1=value1; cookie2=value2)
+    console.log('📋 Parsing as header string format');
+    const parts = trimmed.split(';');
     for (const part of parts) {
-      const [key, ...valueParts] = part.split('=');
+      const [key, ...valueParts] = part.trim().split('=');
       if (key && valueParts.length) {
         cookies[key] = valueParts.join('=');
       }
     }
+    console.log(`✅ Parsed ${Object.keys(cookies).length} cookies from string`);
     return cookies;
   }
+
+  console.error('❌ Unknown cookie format:', typeof cookiesStr);
+  return cookies;
 }
 
 /**

@@ -6,11 +6,19 @@ import express from 'express';
 import authRoutes from './authRoutes.js';
 import adminRoutes from './adminRoutes.js';
 import flaticonRoutes from './products/flaticonRoutes.js';
+import envatoRoutes from './products/envatoRoutes.js';
+import vecteezyRoutes from './products/vecteezy.js';
 import { handleMediaProxy } from '../controllers/proxyController.js';
-import { showLimitReachedPage } from '../controllers/downloadController.js'; // ✅ ADD THIS
+import { showLimitReachedPage } from '../controllers/downloadController.js';
 import flaticonConfig from '../../products/flaticon.js';
-
+ 
 const router = express.Router();
+
+// ✅ LOG EVERY REQUEST TO MAIN ROUTER
+router.use((req, res, next) => {
+  console.log('🔴 [MAIN ROUTER] Request:', req.method, req.url);
+  next();
+});
 
 // ============================================
 // SETUP SESSION ENDPOINT (MUST BE FIRST!)
@@ -79,7 +87,7 @@ router.get('/health', (req, res) => {
 });
 
 // ============================================
-// LIMIT REACHED PAGE (GLOBAL) ✅ ADD THIS
+// LIMIT REACHED PAGE (GLOBAL)
 // ============================================
 router.get('/limit-reached', (req, res) => {
   const productName = req.query.product || 'Flaticon';
@@ -94,12 +102,80 @@ router.use('/', authRoutes);
 // Admin routes
 router.use('/admin', adminRoutes);
 
-// Media proxy route (MUST BE BEFORE PRODUCT ROUTES)
+// Media proxy routes (MUST BE BEFORE PRODUCT ROUTES)
 router.use('/media', (req, res) => {
   return handleMediaProxy(req, res, flaticonConfig, 'media.flaticon.com');
 });
 
-// Product routes (MUST BE LAST)
+// ============================================
+// ✅ NEW: CATCH ORPHANED VECTEEZY API CALLS
+// ============================================
+router.use('/async_contributors_info', (req, res) => {
+  console.log('🔀 [ROOT] Redirecting /async_contributors_info to /vecteezy');
+  return res.redirect(307, `/vecteezy${req.url}`);
+});
+
+router.use('/api/v2', (req, res) => {
+  console.log('🔀 [ROOT] Redirecting /api/v2 to /vecteezy');
+  return res.redirect(307, `/vecteezy${req.url}`);
+});
+
+router.get('/account', (req, res) => {
+  console.log('🔀 [ROOT] Redirecting /account to /vecteezy');
+  return res.redirect(307, '/vecteezy/account');
+});
+
+router.get('/site.webmanifest', (req, res) => {
+  console.log('🔀 [ROOT] Redirecting /site.webmanifest to /vecteezy');
+  return res.redirect(307, '/vecteezy/site.webmanifest');
+});
+
+// ============================================
+// ENVATO CATCH-ALL ROUTES (Before product routes!)
+// ============================================
+router.use('/data-api', (req, res) => {
+  console.log('🔀 [ROOT] Redirecting /data-api to /envato/data-api');
+  return res.redirect(307, `/envato${req.url}`);
+});
+
+router.use('/elements-api', (req, res) => {
+  console.log('🔀 [ROOT] Redirecting /elements-api to /envato/elements-api');
+  return res.redirect(307, `/envato${req.url}`);
+});
+
+router.get('/manifest.webmanifest', (req, res) => {
+  console.log('🔀 [ROOT] Redirecting /manifest.webmanifest to /envato/manifest.webmanifest');
+  return res.redirect(307, '/envato/manifest.webmanifest');
+});
+
+// ============================================
+// STATIC JSON RESPONSES (for compatibility)
+// ============================================
+router.get('/elements-api/user_collections.json', (req, res) => {
+  console.log('📄 Serving static user_collections.json');
+  return res.json({ data: [] });
+});
+
+router.get('/elements-api/infrastructure_availability.json', (req, res) => {
+  console.log('📄 Serving static infrastructure_availability.json');
+  return res.json({
+    market: { available: true, scheduledMaintenance: false },
+    identity: { available: true, scheduledMaintenance: false },
+    rss: { available: true, scheduledMaintenance: false },
+    area51: { available: true, scheduledMaintenance: false }
+  });
+});
+
+// ============================================
+// PRODUCT ROUTES (MUST BE LAST)
+// ============================================
 router.use('/flaticon', flaticonRoutes);
+console.log('✅ Registered /flaticon route');
+
+router.use('/envato', envatoRoutes);
+console.log('✅ Registered /envato route');
+
+router.use('/vecteezy', vecteezyRoutes);
+console.log('✅ Registered /vecteezy route');
 
 export default router;
