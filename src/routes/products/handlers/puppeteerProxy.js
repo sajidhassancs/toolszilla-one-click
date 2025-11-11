@@ -1,6 +1,3 @@
-/**
- * Puppeteer-based Proxy Handler
- */
 import { getBrowser } from '../../../services/browserService.js';
 import { decryptUserCookies } from '../../../services/cookieService.js';
 import { getDataFromApiWithoutVerify } from '../../../services/apiService.js';
@@ -31,7 +28,18 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
 
     // Parse cookies if stored as string
     if (typeof cookiesArray === 'string') {
-      cookiesArray = JSON.parse(cookiesArray);
+      try {
+        cookiesArray = JSON.parse(cookiesArray);
+      } catch (e) {
+        console.error('❌ Failed to parse cookies:', e.message);
+        return res.status(500).send('Invalid cookie configuration');
+      }
+    }
+
+    // ✅ CHECK FOR NULL OR EMPTY COOKIES
+    if (!cookiesArray || cookiesArray === 'null' || !Array.isArray(cookiesArray) || cookiesArray.length === 0) {
+      console.error('❌ No valid cookies available for this product');
+      return res.status(500).send('No cookies configured. Please add cookies in admin panel for ' + productConfig.displayName);
     }
 
     console.log('🍪 Loaded', cookiesArray.length, 'cookies for Puppeteer');
@@ -52,6 +60,34 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
     browser = await getBrowser();
     const page = await browser.newPage();
 
+    // ✅ SETUP REQUEST HANDLER FIRST (BEFORE ENABLING INTERCEPTION)
+    page.on('request', (request) => {
+      const url = request.url();
+      const resourceType = request.resourceType();
+      
+      // Block tracking, analytics, and unnecessary resources
+ if (
+  url.includes('bat.bing.com') ||
+  url.includes('google-analytics.com') ||
+  url.includes('googletagmanager.com') ||
+  url.includes('doubleclick.net') ||
+  url.includes('facebook.com/tr') ||
+  url.includes('clarity.ms') ||
+  url.includes('hotjar.com') ||
+  url.includes('connect.facebook.net') ||
+  url.includes('analytics.tiktok.com')
+  // ✅ Removed font blocking
+) {
+        console.log('🚫 BLOCKED:', url);
+        request.abort();
+      } else {
+        request.continue();
+      }
+    });
+
+    // ✅ THEN ENABLE INTERCEPTION
+    await page.setRequestInterception(true);
+
     // Set cookies
     const puppeteerCookies = cookiesArray.map(cookie => ({
       name: cookie.name,
@@ -67,8 +103,10 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
     await page.setCookie(...puppeteerCookies);
     console.log('✅ Set', puppeteerCookies.length, 'cookies in browser');
 
-    // ✅ NEW: Inject script to intercept fetch/XHR BEFORE navigation
+    // ✅ IMPROVED: Inject script to intercept fetch/XHR BEFORE navigation
     await page.evaluateOnNewDocument((productPrefix) => {
+      console.log('🔧 [INTERCEPTOR] Product prefix:', productPrefix);
+
       // Intercept fetch
       const originalFetch = window.fetch;
       window.fetch = function(...args) {
@@ -76,8 +114,9 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
         
         // If URL starts with /, add product prefix
         if (typeof url === 'string' && url.startsWith('/') && !url.startsWith(productPrefix)) {
-          args[0] = productPrefix + url;
-          console.log('[FETCH INTERCEPTED]', url, '→', args[0]);
+          const newUrl = productPrefix + url;
+          console.log('[FETCH INTERCEPTED]', url, '→', newUrl);
+          args[0] = newUrl;
         }
         
         return originalFetch.apply(this, args);
@@ -88,45 +127,88 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
       XMLHttpRequest.prototype.open = function(method, url, ...rest) {
         // If URL starts with /, add product prefix
         if (typeof url === 'string' && url.startsWith('/') && !url.startsWith(productPrefix)) {
-          url = productPrefix + url;
-          console.log('[XHR INTERCEPTED]', url);
+          const newUrl = productPrefix + url;
+          console.log('[XHR INTERCEPTED]', url, '→', newUrl);
+          url = newUrl;
         }
         
         return originalOpen.call(this, method, url, ...rest);
       };
+
+      // 🔥 NEW: Intercept Request constructor for modern frameworks
+      if (window.Request) {
+        const OriginalRequest = window.Request;
+        window.Request = function(input, init) {
+          if (typeof input === 'string' && input.startsWith('/') && !input.startsWith(productPrefix)) {
+            console.log('[REQUEST INTERCEPTED]', input, '→', productPrefix + input);
+            input = productPrefix + input;
+          }
+          return new OriginalRequest(input, init);
+        };
+      }
     }, productPrefix);
 
-    // Navigate to page
-    await page.goto(targetUrl, { 
-      waitUntil: 'networkidle0',
-      timeout: 30000 
-    });
+// Navigate to page with extensive debugging
+console.log('🚀 Attempting to load page...');
 
-    console.log('✅ Page loaded successfully');
+// Log all network requests
+page.on('response', (response) => {
+  if (!response.ok()) {
+    console.log(`⚠️  Failed request: ${response.status()} ${response.url()}`);
+  }
+});
+
+// Try to load with a very permissive strategy
+try {
+  await page.goto(targetUrl, { 
+    waitUntil: 'domcontentloaded',
+    timeout: 90000  // 90 seconds
+  });
+  console.log('✅ Page loaded successfully');
+} catch (error) {
+  console.error('❌ Page load failed:', error.message);
+  
+  // Try to get partial content anyway
+  console.log('🔄 Attempting to get partial content...');
+  try {
+    const content = await page.content();
+    if (content && content.length > 100) {
+      console.log('✅ Got partial content, proceeding...');
+      // Don't throw, continue with what we have
+    } else {
+      throw error;
+    }
+  } catch (contentError) {
+    throw error; // Re-throw original error
+  }
+}
 
     // Get page content
-    let html = await page.content();
+let html = await page.content();
 
-    // ✅ IMPROVED URL REWRITING
-    console.log('🔧 Rewriting URLs in HTML...');
+// ✅ IMPROVED URL REWRITING
+console.log('🔧 Rewriting URLs in HTML...');
 
-    const localProxyBase = `http://${req.get('host')}${productPrefix}`;
+const localProxyBase = `http://${req.get('host')}${productPrefix}`;
 
-    // 1. Replace absolute domain URLs
-    html = html.replace(
-      new RegExp(`https://${productConfig.domain.replace(/\./g, '\\.')}`, 'g'),
-      localProxyBase
-    );
-    html = html.replace(
-      new RegExp(`http://${productConfig.domain.replace(/\./g, '\\.')}`, 'g'),
-      localProxyBase
-    );
+// 🔥 INJECT BASE TAG - This forces ALL relative URLs to use /freepik/ prefix
+const baseTag = `<base href="${localProxyBase}/">`;
+if (html.includes('<head>')) {
+  html = html.replace('<head>', `<head>${baseTag}`);
+} else if (html.includes('<html>')) {
+  html = html.replace('<html>', `<html><head>${baseTag}</head>`);
+}
+console.log('   ✅ Injected base tag:', baseTag);
 
-    // 2. Replace protocol-relative URLs (//domain.com)
-    html = html.replace(
-      new RegExp(`//${productConfig.domain.replace(/\./g, '\\.')}`, 'g'),
-      localProxyBase
-    );
+// 1. Replace absolute domain URLs
+html = html.replace(
+  new RegExp(`https://${productConfig.domain.replace(/\./g, '\\.')}`, 'g'),
+  localProxyBase
+);
+
+    // 🔥 NEW: Fix API calls and manifest in JavaScript/JSON
+    html = html.replace(/["']\/api\//g, `"${productPrefix}/api/`);
+    html = html.replace(/["']\/manifest\.json/g, `"${productPrefix}/manifest.json`);
 
     // 3. Fix relative paths (starting with /)
     html = html.replace(/href="\/(?!\/)/g, `href="${productPrefix}/`);
@@ -170,6 +252,7 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
     });
   }
 }
+
 /**
  * Proxy assets (CSS, JS, images) using Puppeteer browser
  */
@@ -195,7 +278,18 @@ export async function proxyAssetWithPuppeteer(req, res, productConfig, assetDoma
     let cookiesArray = apiData.access_configuration_preferences[0].accounts[0];
 
     if (typeof cookiesArray === 'string') {
-      cookiesArray = JSON.parse(cookiesArray);
+      try {
+        cookiesArray = JSON.parse(cookiesArray);
+      } catch (e) {
+        console.error('❌ Failed to parse cookies:', e.message);
+        return res.status(403).send('Invalid cookie configuration');
+      }
+    }
+
+    // ✅ CHECK FOR NULL OR EMPTY COOKIES
+    if (!cookiesArray || cookiesArray === 'null' || !Array.isArray(cookiesArray) || cookiesArray.length === 0) {
+      console.error('❌ No valid cookies available for asset');
+      return res.status(403).send('No cookies configured');
     }
 
     // Get clean asset path
@@ -214,6 +308,31 @@ export async function proxyAssetWithPuppeteer(req, res, productConfig, assetDoma
     browser = await getBrowser();
     const page = await browser.newPage();
 
+    // ✅ SETUP REQUEST HANDLER FIRST
+    page.on('request', (request) => {
+      const url = request.url();
+      const resourceType = request.resourceType();
+      
+    if (
+  url.includes('bat.bing.com') ||
+  url.includes('google-analytics.com') ||
+  url.includes('googletagmanager.com') ||
+  url.includes('doubleclick.net') ||
+  url.includes('facebook.com/tr') ||
+  url.includes('clarity.ms') ||
+  url.includes('hotjar.com')
+  // ✅ Removed font blocking
+) {
+        console.log('🚫 BLOCKED:', url);
+        request.abort();
+      } else {
+        request.continue();
+      }
+    });
+
+    // ✅ THEN ENABLE INTERCEPTION
+    await page.setRequestInterception(true);
+
     // Set cookies
     const puppeteerCookies = cookiesArray.map(cookie => ({
       name: cookie.name,
@@ -228,9 +347,9 @@ export async function proxyAssetWithPuppeteer(req, res, productConfig, assetDoma
 
     await page.setCookie(...puppeteerCookies);
 
-    // Fetch asset
+    // Fetch asset - ✅ FASTER LOADING
     const response = await page.goto(assetUrl, {
-      waitUntil: 'networkidle0',
+      waitUntil: 'domcontentloaded',
       timeout: 15000
     });
 

@@ -483,12 +483,6 @@ export async function proxyEnvatoAccount(req, res) {
   }
 }
 
-/**
- * Proxy Envato API endpoints (data-api, elements-api, manifest)
- */
-/**
- * Proxy Envato API endpoints (data-api, elements-api, manifest)
- */
 export async function proxyEnvatoApi(req, res, apiType) {
   try {
     // Get user cookies
@@ -552,12 +546,12 @@ export async function proxyEnvatoApi(req, res, apiType) {
     
     console.log(`✅ ${apiType} response: ${response.status}`);
     
-    // ✅ Handle 404 and 429 - return empty success
+    // ✅ Handle 404 and 429 gracefully
     if (response.status === 404 || response.status === 429) {
       console.log(`⚠️  Status ${response.status} - returning empty response`);
       res.set('Access-Control-Allow-Origin', '*');
       res.set('Content-Type', 'application/json');
-      return res.status(200).json({});
+      return res.status(200).json({ data: [] });
     }
     
     // Set CORS headers
@@ -568,7 +562,9 @@ export async function proxyEnvatoApi(req, res, apiType) {
       res.set('Content-Type', response.headers['content-type']);
     }
     
+    // ✅ SINGLE RETURN STATEMENT
     return res.status(response.status).send(response.data);
+    
   } catch (error) {
     console.error(`❌ Error proxying ${apiType}:`, error.message);
     return res.status(500).json({ 

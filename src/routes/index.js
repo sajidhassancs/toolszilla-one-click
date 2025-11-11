@@ -8,10 +8,14 @@ import adminRoutes from './adminRoutes.js';
 import flaticonRoutes from './products/flaticonRoutes.js';
 import envatoRoutes from './products/envatoRoutes.js';
 import vecteezyRoutes from './products/vecteezy.js';
+import storyblocksRoutes from './products/storyblocksRoutes.js';
+import iconscoutRoutes from './products/iconscoutRoutes.js';
+import epidemicsoundRoutes from './products/epidemicsoundRoutes.js';
+import freepikRoutes from './products/freepikRoutes.js';
 import { handleMediaProxy } from '../controllers/proxyController.js';
 import { showLimitReachedPage } from '../controllers/downloadController.js';
 import flaticonConfig from '../../products/flaticon.js';
- 
+ import pikbestRoutes from './products/pikbestRoutes.js';
 const router = express.Router();
 
 // ✅ LOG EVERY REQUEST TO MAIN ROUTER
@@ -108,7 +112,7 @@ router.use('/media', (req, res) => {
 });
 
 // ============================================
-// ✅ NEW: CATCH ORPHANED VECTEEZY API CALLS
+// ✅ VECTEEZY API CATCH-ALL
 // ============================================
 router.use('/async_contributors_info', (req, res) => {
   console.log('🔀 [ROOT] Redirecting /async_contributors_info to /vecteezy');
@@ -131,7 +135,7 @@ router.get('/site.webmanifest', (req, res) => {
 });
 
 // ============================================
-// ENVATO CATCH-ALL ROUTES (Before product routes!)
+// ✅ ENVATO CATCH-ALL ROUTES
 // ============================================
 router.use('/data-api', (req, res) => {
   console.log('🔀 [ROOT] Redirecting /data-api to /envato/data-api');
@@ -146,6 +150,31 @@ router.use('/elements-api', (req, res) => {
 router.get('/manifest.webmanifest', (req, res) => {
   console.log('🔀 [ROOT] Redirecting /manifest.webmanifest to /envato/manifest.webmanifest');
   return res.redirect(307, '/envato/manifest.webmanifest');
+});
+
+// ============================================
+// ✅ ICONSCOUT API CATCH-ALL
+// ============================================
+router.use('/strapi', (req, res) => {
+  console.log('🔀 [ROOT] Redirecting /strapi to /iconscout/strapi');
+  return res.redirect(307, `/iconscout${req.url}`);
+});
+
+router.use('/cdn-cgi', (req, res) => {
+  console.log('🔀 [ROOT] Redirecting /cdn-cgi to /iconscout/cdn-cgi');
+  return res.redirect(307, `/iconscout${req.url}`);
+});
+
+router.get('/manifest.json', (req, res, next) => {
+  // Check referer to determine which product
+  const referer = req.headers.referer || '';
+  
+  if (referer.includes('/iconscout')) {
+    console.log('🔀 [ROOT] Redirecting /manifest.json to /iconscout/manifest.json');
+    return res.redirect(307, '/iconscout/manifest.json');
+  }
+  
+  next(); // Let other routes handle it
 });
 
 // ============================================
@@ -178,4 +207,18 @@ console.log('✅ Registered /envato route');
 router.use('/vecteezy', vecteezyRoutes);
 console.log('✅ Registered /vecteezy route');
 
+router.use('/storyblocks', storyblocksRoutes);
+console.log('✅ Registered /storyblocks route');
+
+router.use('/epidemicsound', epidemicsoundRoutes);
+console.log('✅ Registered /epidemicsound route');
+
+router.use('/freepik', freepikRoutes);
+console.log('✅ Registered /freepik route');
+
+router.use('/iconscout', iconscoutRoutes);
+console.log('✅ Registered /iconscout route');
+ 
+router.use('/pikbest', pikbestRoutes);
+console.log('✅ Registered /pikbest route');
 export default router;

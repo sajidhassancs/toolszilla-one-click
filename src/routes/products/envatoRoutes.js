@@ -93,8 +93,8 @@ router.get('/favicon.svg', (req, res) => {
 
 // ✅ CHANGED: Use Puppeteer instead of Axios
 router.use('/', (req, res) => {
-  console.log('✅ HIT ROOT ROUTE - Using Puppeteer proxy');
-  return proxyEnvatoWithPuppeteer(req, res);
+  console.log('✅ HIT ROOT ROUTE - Using standard proxy');
+  return handleProxyRequest(req, res, envatoConfig);
 });
 
 export default router;
