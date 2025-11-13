@@ -38,14 +38,17 @@ export async function proxyIconscoutWithAxios(req, res) {
       cleanPath = cleanPath.substring(productPrefix.length);
     }
     
+    if (!cleanPath || cleanPath === '') {
+      cleanPath = '/';
+    }
+    
     if (!cleanPath.startsWith('/')) {
       cleanPath = '/' + cleanPath;
     }
     
-    
-const targetUrl = `https://${iconscoutConfig.domain}${cleanPath}`;
-console.log('🔍 cleanPath:', cleanPath);
-console.log('🔍 targetUrl:', targetUrl);
+    const targetUrl = `https://${iconscoutConfig.domain}${cleanPath}`;
+    console.log('🔍 cleanPath:', cleanPath);
+    console.log('🔍 targetUrl:', targetUrl);
     
     // Make request
     const response = await axios({
@@ -69,7 +72,9 @@ console.log('🔍 targetUrl:', targetUrl);
       },
       data: req.body,
       validateStatus: () => true,
-      responseType: 'arraybuffer'
+      responseType: 'arraybuffer',
+      maxRedirects: 5,
+      timeout: 15000
     });
     
     console.log(`✅ Response: ${response.status}`);
@@ -82,64 +87,103 @@ console.log('🔍 targetUrl:', targetUrl);
     // Get current host for dynamic replacements
     const currentHost = `${req.protocol}://${req.get('host')}`;
     
-// For HTML, rewrite URLs
+  // For HTML, rewrite URLs
 if (contentType.includes('text/html')) {
   let html = response.data.toString('utf-8');
   
-  console.log('🔧 Rewriting URLs in HTML...');
+  console.log('🔧 Rewriting HTML URLs...');
   
-  // ✅ Dynamic CDN domain replacements
-  html = html.replace(/https:\/\/cdna\.iconscout\.com/g, `${currentHost}/iconscout/cdna`);
-  html = html.replace(/https:\/\/cdn3d\.iconscout\.com/g, `${currentHost}/iconscout/cdn3d`);
-  html = html.replace(/https:\/\/cdn\.iconscout\.com/g, `${currentHost}/iconscout/cdn`);
-  html = html.replace(/https:\/\/assets\.iconscout\.com/g, `${currentHost}/iconscout/assets`);
+  // ✅ Replace CDN domains with /image prefix
+  html = html.replace(/https:\/\/cdn3d\.iconscout\.com/g, `${currentHost}/iconscout/image/cdn3d`);
+  html = html.replace(/https:\/\/cdna\.iconscout\.com/g, `${currentHost}/iconscout/image/cdna`);
+  html = html.replace(/https:\/\/cdn\.iconscout\.com/g, `${currentHost}/iconscout/image/cdn`);
+  html = html.replace(/https:\/\/assets\.iconscout\.com/g, `${currentHost}/iconscout/image/assets`);
   
-  // Protocol-relative URLs
-  html = html.replace(/\/\/cdna\.iconscout\.com/g, `${currentHost}/iconscout/cdna`);
-  html = html.replace(/\/\/cdn3d\.iconscout\.com/g, `${currentHost}/iconscout/cdn3d`);
-  html = html.replace(/\/\/cdn\.iconscout\.com/g, `${currentHost}/iconscout/cdn`);
-  html = html.replace(/\/\/assets\.iconscout\.com/g, `${currentHost}/iconscout/assets`);
+  // ✅ Protocol-relative URLs with /image prefix
+  html = html.replace(/\/\/cdn3d\.iconscout\.com/g, `${currentHost}/iconscout/image/cdn3d`);
+  html = html.replace(/\/\/cdna\.iconscout\.com/g, `${currentHost}/iconscout/image/cdna`);
+  html = html.replace(/\/\/cdn\.iconscout\.com/g, `${currentHost}/iconscout/image/cdn`);
+  html = html.replace(/\/\/assets\.iconscout\.com/g, `${currentHost}/iconscout/image/assets`);
   
-  // ✅ Add base tag for relative URLs
+  // Fix relative paths
+  html = html.replace(/href="\/(?!iconscout)/g, 'href="/iconscout/');
+  html = html.replace(/src="\/(?!iconscout)/g, 'src="/iconscout/');
+  
+  // ✅ CRITICAL: Inject CDN URL override script with /image prefix
+  const cdnOverrideScript = `
+    <script>
+    (function() {
+      // Override URL construction for CDN images
+      const originalImage = window.Image;
+      window.Image = function() {
+        const img = new originalImage();
+        const originalSetSrc = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src').set;
+        Object.defineProperty(img, 'src', {
+          set: function(value) {
+            let newValue = value;
+            if (typeof value === 'string') {
+              newValue = value
+                .replace(/https:\\/\\/cdn3d\\.iconscout\\.com/g, '${currentHost}/iconscout/image/cdn3d')
+                .replace(/https:\\/\\/cdna\\.iconscout\\.com/g, '${currentHost}/iconscout/image/cdna')
+                .replace(/https:\\/\\/cdn\\.iconscout\\.com/g, '${currentHost}/iconscout/image/cdn');
+            }
+            originalSetSrc.call(this, newValue);
+          },
+          get: function() {
+            return this.getAttribute('src');
+          }
+        });
+        return img;
+      };
+      
+      // Also override setAttribute for existing images
+      const originalSetAttribute = Element.prototype.setAttribute;
+      Element.prototype.setAttribute = function(name, value) {
+        if (name === 'src' && this.tagName === 'IMG') {
+          value = value
+            .replace(/https:\\/\\/cdn3d\\.iconscout\\.com/g, '${currentHost}/iconscout/image/cdn3d')
+            .replace(/https:\\/\\/cdna\\.iconscout\\.com/g, '${currentHost}/iconscout/image/cdna')
+            .replace(/https:\\/\\/cdn\\.iconscout\\.com/g, '${currentHost}/iconscout/image/cdn');
+        }
+        return originalSetAttribute.call(this, name, value);
+      };
+    })();
+    </script>
+  `;
+  
+  // Inject script right after <head> tag
   if (html.includes('<head>')) {
-    const baseTag = `<base href="${currentHost}/iconscout/">`;
-    html = html.replace('<head>', `<head>${baseTag}`);
-    console.log('   ✅ Injected base tag');
+    html = html.replace('<head>', `<head>${cdnOverrideScript}`);
+    console.log('   ✅ Injected CDN override script');
   }
   
-  // Fix absolute paths
-  html = html.replace(/href="\//g, 'href="/iconscout/');
-  html = html.replace(/src="\//g, 'src="/iconscout/');
-  html = html.replace(/srcset="\//g, 'srcset="/iconscout/');
-  html = html.replace(/url\(\//g, 'url(/iconscout/');
+  console.log('   ✅ HTML rewriting complete');
   
-  // Fix double slashes
-  html = html.replace(/\/iconscout\/iconscout\//g, '/iconscout/');
-  
-  console.log('   ✅ URL rewriting complete');
-  
-  return res.status(response.status).type('text/html').send(html);
+  res.set('Content-Type', 'text/html');
+  return res.status(response.status).send(html);
 }
-    // For JavaScript, rewrite API paths
+    
+    // ✅ For JavaScript, rewrite CDN paths with /image prefix
     if (contentType.includes('javascript') || contentType.includes('text/javascript')) {
       let js = response.data.toString('utf-8');
       
       // Replace CDN domains in JS
-      js = js.replace(/https:\/\/cdna\.iconscout\.com/g, `${currentHost}/iconscout/cdna`);
-      js = js.replace(/https:\/\/cdn3d\.iconscout\.com/g, `${currentHost}/iconscout/cdn3d`);
-      js = js.replace(/https:\/\/cdn\.iconscout\.com/g, `${currentHost}/iconscout/cdn`);
-    
+      js = js.replace(/https:\/\/cdna\.iconscout\.com/g, `${currentHost}/iconscout/image/cdna`);
+      js = js.replace(/https:\/\/cdn3d\.iconscout\.com/g, `${currentHost}/iconscout/image/cdn3d`);
+      js = js.replace(/https:\/\/cdn\.iconscout\.com/g, `${currentHost}/iconscout/image/cdn`);
+      js = js.replace(/https:\/\/api\.iconscout\.com/g, `${currentHost}/iconscout/api-domain`);
       
       return res.status(response.status).type(contentType).send(js);
     }
     
-    // For CSS, rewrite URLs
+    // ✅ For CSS, rewrite URLs with /image prefix
     if (contentType.includes('css')) {
       let css = response.data.toString('utf-8');
       
-      css = css.replace(/url\(\//g, 'url(/iconscout/');
-      css = css.replace(/https:\/\/cdna\.iconscout\.com/g, `${currentHost}/iconscout/cdna`);
-      css = css.replace(/https:\/\/cdn3d\.iconscout\.com/g, `${currentHost}/iconscout/cdn3d`);
+      css = css.replace(/url\(\/(?!iconscout)/g, 'url(/iconscout/');
+      css = css.replace(/https:\/\/cdna\.iconscout\.com/g, `${currentHost}/iconscout/image/cdna`);
+      css = css.replace(/https:\/\/cdn3d\.iconscout\.com/g, `${currentHost}/iconscout/image/cdn3d`);
+      css = css.replace(/https:\/\/cdn\.iconscout\.com/g, `${currentHost}/iconscout/image/cdn`);
       
       return res.status(response.status).type(contentType).send(css);
     }

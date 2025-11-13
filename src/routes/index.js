@@ -1,8 +1,9 @@
 /**
- * Main Router
- * Combines all route modules
+ * Main Router - FIXED AUTO-ROUTER
+ * Prevents double prefixing issue
  */
 import express from 'express';
+import axios from 'axios';
 import authRoutes from './authRoutes.js';
 import adminRoutes from './adminRoutes.js';
 import flaticonRoutes from './products/flaticonRoutes.js';
@@ -12,20 +13,24 @@ import storyblocksRoutes from './products/storyblocksRoutes.js';
 import iconscoutRoutes from './products/iconscoutRoutes.js';
 import epidemicsoundRoutes from './products/epidemicsoundRoutes.js';
 import freepikRoutes from './products/freepikRoutes.js';
+import pikbestRoutes from './products/pikbestRoutes.js';
 import { handleMediaProxy } from '../controllers/proxyController.js';
 import { showLimitReachedPage } from '../controllers/downloadController.js';
+import { decryptUserCookies, decryptUserCookiesNoSessionCheck } from '../services/cookieService.js';
+import { getDataFromApiWithoutVerify } from '../services/apiService.js';
 import flaticonConfig from '../../products/flaticon.js';
- import pikbestRoutes from './products/pikbestRoutes.js';
+import stealthwriterRoutes from './products/stealthwriterRoutes.js';
+import turndetectRoutes from './products/turndetectRoutes.js';
 const router = express.Router();
 
-// ✅ LOG EVERY REQUEST TO MAIN ROUTER
+// ✅ LOG EVERY REQUEST (MUST BE FIRST!)
 router.use((req, res, next) => {
   console.log('🔴 [MAIN ROUTER] Request:', req.method, req.url);
   next();
 });
 
 // ============================================
-// SETUP SESSION ENDPOINT (MUST BE FIRST!)
+// SETUP SESSION ENDPOINT
 // ============================================
 router.get('/setup-session', (req, res) => {
   console.log('🔧 Setting up session');
@@ -40,29 +45,45 @@ router.get('/setup-session', (req, res) => {
     ttl
   } = req.query;
 
-  // Validate
   if (!auth_token || !prefix || !product || !site) {
     console.error('❌ Missing required parameters');
-    return res.status(400).json({ 
-      error: 'Missing required parameters',
-      required: ['auth_token', 'prefix', 'product', 'site'],
-      received: Object.keys(req.query)
-    });
+    return res.status(400).send(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Session Setup Required</title>
+        <style>
+          body { font-family: Arial, sans-serif; max-width: 600px; margin: 100px auto; padding: 20px; }
+          .error { background: #fee; border: 2px solid #f00; padding: 20px; border-radius: 8px; }
+          h1 { color: #c00; }
+        </style>
+      </head>
+      <body>
+        <div class="error">
+          <h1>⚠️ Session Setup Error</h1>
+          <p><strong>Your session has expired or is invalid.</strong></p>
+          <p>Please go back to your ToolsZilla dashboard and click the "One-Click Access" button again.</p>
+        </div>
+      </body>
+      </html>
+    `);
   }
 
   console.log('✅ All parameters present');
 
-  // Cookie options
+  // ✅ DETECT LOCALHOST vs PRODUCTION
+  const isLocalhost = req.get('host').includes('localhost') || req.get('host').includes('127.0.0.1');
+  
   const cookieOptions = {
     httpOnly: true,
-    secure: false,
+    secure: !isLocalhost,
     maxAge: 3600000,
     path: '/',
-    sameSite: 'lax'
+    sameSite: isLocalhost ? 'lax' : 'none',
+    ...(isLocalhost ? {} : { domain: '.primewp.net' })
   };
 
-  // Set cookies
-  console.log('🍪 Setting cookies...');
+  console.log('🍪 Setting cookies with options:', cookieOptions);
   res.cookie('auth_token', auth_token, cookieOptions);
   res.cookie('prefix', prefix, cookieOptions);
   res.cookie('product', product, cookieOptions);
@@ -91,7 +112,53 @@ router.get('/health', (req, res) => {
 });
 
 // ============================================
-// LIMIT REACHED PAGE (GLOBAL)
+// ✅ MANIFEST.JSON - SMART ROUTER
+// ============================================
+router.get('/manifest.json', (req, res) => {
+  const referer = req.headers.referer || '';
+  
+  console.log('📱 [MANIFEST] Request');
+  console.log('   Referer:', referer);
+  console.log('   Cookies:', req.cookies);
+  
+  // Check if request is from Iconscout
+  if (referer.includes('/iconscout') || req.cookies.product === 'iconscout') {
+    console.log('   ✅ Returning Iconscout manifest');
+    return res.status(200).json({
+      name: "Iconscout",
+      short_name: "Iconscout",
+      start_url: "/iconscout/",
+      display: "standalone",
+      background_color: "#ffffff",
+      theme_color: "#000000",
+      icons: []
+    });
+  }
+  
+  // Default manifest
+  console.log('   ✅ Returning default manifest');
+  return res.status(200).json({
+    name: "ToolsZilla",
+    short_name: "ToolsZilla",
+    start_url: "/",
+    display: "standalone",
+    icons: []
+  });
+});
+
+// ============================================
+// ✅ CLOUDFLARE CDN-CGI ROUTES AT ROOT LEVEL
+// ============================================
+router.all('/cdn-cgi/rum', (req, res) => {
+  return res.status(200).json({ success: true });
+});
+
+router.all(/^\/cdn-cgi\/.*$/, (req, res) => {
+  return res.status(200).json({ success: true });
+});
+
+// ============================================
+// LIMIT REACHED PAGE
 // ============================================
 router.get('/limit-reached', (req, res) => {
   const productName = req.query.product || 'Flaticon';
@@ -100,103 +167,378 @@ router.get('/limit-reached', (req, res) => {
   return showLimitReachedPage(req, res, productName, planType);
 });
 
+// ============================================
+// ✅ CDN ROUTES WITH /image PREFIX (MUST BE BEFORE /iconscout PRODUCT ROUTE!)
+// ============================================
+
+// ✅ CDNA Route - FIXED TO WORK WITHOUT COOKIES
+router.get(/^\/iconscout\/image\/cdna\/(.*)$/, async (req, res) => {
+  const cdnPath = req.params[0];
+  const cdnUrl = `https://cdna.iconscout.com/${cdnPath}`;
+  
+  console.log('\n========== CDNA REQUEST ==========');
+  console.log('🎨 [CDNA] Request:', cdnUrl);
+  console.log('   📋 File:', cdnPath);
+  
+  try {
+    const returnFallback = (reason) => {
+      console.log('   ❌ Fallback:', reason);
+      if (cdnPath.endsWith('.js')) {
+        res.set('Content-Type', 'application/javascript');
+        return res.status(200).send('console.error("CDNA: ' + reason + '");');
+      }
+      const pixel = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+      res.set('Content-Type', 'image/png');
+      return res.status(200).send(pixel);
+    };
+
+    let cookieString = '';
+    
+    try {
+      if (req.cookies.auth_token && req.cookies.prefix) {
+        const userData = await decryptUserCookiesNoSessionCheck(req);
+        if (!userData.redirect) {
+          const apiData = await getDataFromApiWithoutVerify(userData.prefix);
+          let cookiesArray = apiData.access_configuration_preferences[0].accounts[0];
+          
+          if (typeof cookiesArray === 'string') {
+            cookiesArray = JSON.parse(cookiesArray);
+          }
+          
+          cookieString = cookiesArray.map(c => `${c.name}=${c.value}`).join('; ');
+          console.log('   🍪 Got', cookiesArray.length, 'premium cookies');
+        } else {
+          console.log('   ⚠️ Invalid session - continuing without auth');
+        }
+      } else {
+        console.log('   ⚠️ No auth cookies - trying without authentication');
+      }
+    } catch (cookieError) {
+      console.log('   ⚠️ Cookie error:', cookieError.message, '- continuing without auth');
+    }
+
+    const acceptHeader = cdnPath.endsWith('.js') ? 'application/javascript, */*' 
+      : cdnPath.match(/\.(png|jpg|jpeg|gif|webp|svg)$/i) ? 'image/*,*/*'
+      : cdnPath.endsWith('.css') ? 'text/css,*/*'
+      : cdnPath.match(/\.(woff|woff2|ttf|eot)$/i) ? 'font/*,*/*'
+      : '*/*';
+
+    console.log('   🌐 Fetching...');
+    
+    const headers = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      'Accept': acceptHeader,
+      'Referer': 'https://iconscout.com/'
+    };
+    
+    if (cookieString) {
+      headers['Cookie'] = cookieString;
+    }
+    
+    const response = await axios.get(cdnUrl, {
+      headers: headers,
+      responseType: 'arraybuffer',
+      validateStatus: () => true,
+      timeout: 15000
+    });
+    
+    console.log('   📊 Response:', response.status, response.headers['content-type'], response.data.length, 'bytes');
+    
+    if (response.status === 403 || response.status === 404 || response.data.length === 0) {
+      return returnFallback('CDN ' + response.status);
+    }
+
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Cache-Control', 'public, max-age=31536000');
+    if (response.headers['content-type']) {
+      res.set('Content-Type', response.headers['content-type']);
+    }
+    
+    console.log('   ✅ SUCCESS\n');
+    return res.status(response.status).send(response.data);
+    
+  } catch (error) {
+    console.error('   ❌ EXCEPTION:', error.message, '\n');
+    if (cdnPath.endsWith('.js')) {
+      res.set('Content-Type', 'application/javascript');
+      return res.status(200).send('console.error("Exception");');
+    }
+    const pixel = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+    res.set('Content-Type', 'image/png');
+    return res.status(200).send(pixel);
+  }
+});
+
+// ✅ CDN3D Route
+router.get(/^\/iconscout\/image\/cdn3d\/(.*)$/, async (req, res) => {
+  try {
+    const cdnPath = req.params[0];
+    const cdnUrl = `https://cdn3d.iconscout.com/${cdnPath}`;
+    
+    console.log('🎨 [CDN3D] Request:', cdnUrl);
+    
+    let cookieString = '';
+    
+    try {
+      if (req.cookies.auth_token && req.cookies.prefix) {
+        const userData = await decryptUserCookiesNoSessionCheck(req);
+        if (!userData.redirect) {
+          const prefix = userData.prefix;
+          const apiData = await getDataFromApiWithoutVerify(prefix);
+          let cookiesArray = apiData.access_configuration_preferences[0].accounts[0];
+          
+          if (typeof cookiesArray === 'string') {
+            cookiesArray = JSON.parse(cookiesArray);
+          }
+          
+          cookieString = cookiesArray.map(cookie => `${cookie.name}=${cookie.value}`).join('; ');
+        }
+      }
+    } catch (cookieError) {
+      console.log('   ⚠️ Cookie error - continuing without auth');
+    }
+
+    const headers = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      'Accept': 'image/*,*/*',
+      'Referer': 'https://iconscout.com/'
+    };
+    
+    if (cookieString) {
+      headers['Cookie'] = cookieString;
+    }
+
+    const response = await axios.get(cdnUrl, {
+      headers: headers,
+      responseType: 'arraybuffer',
+      validateStatus: () => true,
+      timeout: 15000
+    });
+    
+    console.log('   ✅ CDN3D Response:', response.status);
+    
+    if (response.status === 403 || response.status === 404) {
+      console.log('   ⚠️ Blocked - returning transparent pixel');
+      const transparentPixel = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+      res.set('Content-Type', 'image/png');
+      res.set('Cache-Control', 'public, max-age=31536000');
+      return res.status(200).send(transparentPixel);
+    }
+
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Cache-Control', 'public, max-age=31536000');
+    
+    if (response.headers['content-type']) {
+      res.set('Content-Type', response.headers['content-type']);
+    }
+    
+    console.log('   ✅ Sending image successfully');
+    return res.status(response.status).send(response.data);
+  } catch (error) {
+    console.error('   ❌ CDN3D error:', error.message);
+    const transparentPixel = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+    res.set('Content-Type', 'image/png');
+    return res.status(200).send(transparentPixel);
+  }
+});
+
+// ✅ CDN Route
+router.get(/^\/iconscout\/image\/cdn\/(.*)$/, async (req, res) => {
+  try {
+    const cdnPath = req.params[0];
+    const cdnUrl = `https://cdn.iconscout.com/${cdnPath}`;
+    
+    console.log('🎨 [CDN] Request:', cdnUrl);
+    
+    let cookieString = '';
+    
+    try {
+      if (req.cookies.auth_token && req.cookies.prefix) {
+        const userData = await decryptUserCookiesNoSessionCheck(req);
+        if (!userData.redirect) {
+          const prefix = userData.prefix;
+          const apiData = await getDataFromApiWithoutVerify(prefix);
+          let cookiesArray = apiData.access_configuration_preferences[0].accounts[0];
+          
+          if (typeof cookiesArray === 'string') {
+            cookiesArray = JSON.parse(cookiesArray);
+          }
+          
+          cookieString = cookiesArray.map(cookie => `${cookie.name}=${cookie.value}`).join('; ');
+        }
+      }
+    } catch (cookieError) {
+      console.log('   ⚠️ Cookie error - continuing without auth');
+    }
+
+    const headers = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      'Accept': 'image/*,*/*',
+      'Referer': 'https://iconscout.com/'
+    };
+    
+    if (cookieString) {
+      headers['Cookie'] = cookieString;
+    }
+
+    const response = await axios.get(cdnUrl, {
+      headers: headers,
+      responseType: 'arraybuffer',
+      validateStatus: () => true,
+      timeout: 15000
+    });
+    
+    console.log('   ✅ CDN Response:', response.status);
+    
+    if (response.status === 403 || response.status === 404) {
+      console.log('   ⚠️ Blocked - returning transparent pixel');
+      const transparentPixel = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+      res.set('Content-Type', 'image/png');
+      res.set('Cache-Control', 'public, max-age=31536000');
+      return res.status(200).send(transparentPixel);
+    }
+
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Cache-Control', 'public, max-age=31536000');
+    
+    if (response.headers['content-type']) {
+      res.set('Content-Type', response.headers['content-type']);
+    }
+    
+    console.log('   ✅ Sending image successfully');
+    return res.status(response.status).send(response.data);
+  } catch (error) {
+    console.error('   ❌ CDN error:', error.message);
+    const transparentPixel = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+    res.set('Content-Type', 'image/png');
+    return res.status(200).send(transparentPixel);
+  }
+});
+
+// ============================================
+// ✅ STRAPI API PROXY (MUST BE BEFORE PRODUCT ROUTES!)
+// ============================================
+router.use('/strapi', async (req, res) => {
+  try {
+    console.log('📡 [STRAPI] Request:', req.originalUrl);
+    
+    const userData = await decryptUserCookies(req);
+    if (userData.redirect) {
+      console.log('   ❌ Unauthorized');
+      return res.status(403).json({ error: 'Unauthorized' });
+    }
+
+    const prefix = userData.prefix;
+    const apiData = await getDataFromApiWithoutVerify(prefix);
+    let cookiesArray = apiData.access_configuration_preferences[0].accounts[0];
+    
+    if (typeof cookiesArray === 'string') {
+      cookiesArray = JSON.parse(cookiesArray);
+    }
+    
+    const cookieString = cookiesArray.map(cookie => `${cookie.name}=${cookie.value}`).join('; ');
+
+    const targetUrl = `https://iconscout.com${req.originalUrl}`;
+    console.log('   Target:', targetUrl);
+    
+    const response = await axios({
+      method: req.method,
+      url: targetUrl,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'application/json',
+        'Referer': 'https://iconscout.com/',
+        'Cookie': cookieString
+      },
+      data: req.body,
+      validateStatus: () => true,
+      timeout: 10000
+    });
+    
+    console.log('   ✅ Strapi Response:', response.status);
+    
+    res.set('Access-Control-Allow-Origin', '*');
+    if (response.headers['content-type']) {
+      res.set('Content-Type', response.headers['content-type']);
+    }
+
+    return res.status(response.status).send(response.data);
+  } catch (error) {
+    console.error('❌ Strapi error:', error.message);
+    return res.status(500).json({ error: 'API error' });
+  }
+});
+
 // Auth routes
 router.use('/', authRoutes);
 
 // Admin routes
 router.use('/admin', adminRoutes);
 
-// Media proxy routes (MUST BE BEFORE PRODUCT ROUTES)
+// Media proxy routes
 router.use('/media', (req, res) => {
   return handleMediaProxy(req, res, flaticonConfig, 'media.flaticon.com');
 });
 
+ 
 // ============================================
-// ✅ VECTEEZY API CATCH-ALL
+// ✅ FIXED AUTO-ROUTER - NO MORE DOUBLE PREFIXING!
 // ============================================
-router.use('/async_contributors_info', (req, res) => {
-  console.log('🔀 [ROOT] Redirecting /async_contributors_info to /vecteezy');
-  return res.redirect(307, `/vecteezy${req.url}`);
-});
-
-router.use('/api/v2', (req, res) => {
-  console.log('🔀 [ROOT] Redirecting /api/v2 to /vecteezy');
-  return res.redirect(307, `/vecteezy${req.url}`);
-});
-
-router.get('/account', (req, res) => {
-  console.log('🔀 [ROOT] Redirecting /account to /vecteezy');
-  return res.redirect(307, '/vecteezy/account');
-});
-
-router.get('/site.webmanifest', (req, res) => {
-  console.log('🔀 [ROOT] Redirecting /site.webmanifest to /vecteezy');
-  return res.redirect(307, '/vecteezy/site.webmanifest');
-});
-
-// ============================================
-// ✅ ENVATO CATCH-ALL ROUTES
-// ============================================
-router.use('/data-api', (req, res) => {
-  console.log('🔀 [ROOT] Redirecting /data-api to /envato/data-api');
-  return res.redirect(307, `/envato${req.url}`);
-});
-
-router.use('/elements-api', (req, res) => {
-  console.log('🔀 [ROOT] Redirecting /elements-api to /envato/elements-api');
-  return res.redirect(307, `/envato${req.url}`);
-});
-
-router.get('/manifest.webmanifest', (req, res) => {
-  console.log('🔀 [ROOT] Redirecting /manifest.webmanifest to /envato/manifest.webmanifest');
-  return res.redirect(307, '/envato/manifest.webmanifest');
-});
-
-// ============================================
-// ✅ ICONSCOUT API CATCH-ALL
-// ============================================
-router.use('/strapi', (req, res) => {
-  console.log('🔀 [ROOT] Redirecting /strapi to /iconscout/strapi');
-  return res.redirect(307, `/iconscout${req.url}`);
-});
-
-router.use('/cdn-cgi', (req, res) => {
-  console.log('🔀 [ROOT] Redirecting /cdn-cgi to /iconscout/cdn-cgi');
-  return res.redirect(307, `/iconscout${req.url}`);
-});
-
-router.get('/manifest.json', (req, res, next) => {
-  // Check referer to determine which product
-  const referer = req.headers.referer || '';
+router.use((req, res, next) => {
+  // ✅ CRITICAL FIX: Exit IMMEDIATELY if URL already has a product prefix
+  const productPrefixes = [
+    '/flaticon', '/envato', '/iconscout', '/stealthwriter',
+    '/vecteezy', '/storyblocks', '/epidemicsound', '/turndetect',
+    '/freepik', '/pikbest'
+  ];
   
-  if (referer.includes('/iconscout')) {
-    console.log('🔀 [ROOT] Redirecting /manifest.json to /iconscout/manifest.json');
-    return res.redirect(307, '/iconscout/manifest.json');
+  // Check each prefix - if found, skip auto-routing completely
+  for (const prefix of productPrefixes) {
+    if (req.url.startsWith(prefix)) {
+      // console.log(`✅ [AUTO-ROUTER] URL already has prefix ${prefix}, skipping`);
+      return next();  // EXIT NOW - Don't modify the URL!
+    }
+  }
+
+  // Skip system routes
+  if (req.url.startsWith('/setup-session') || 
+      req.url.startsWith('/health') ||
+      req.url.startsWith('/manifest.json') ||
+      req.url.startsWith('/cdn-cgi') ||
+      req.url.startsWith('/admin') ||
+      req.url.startsWith('/media') ||
+      req.url.startsWith('/strapi') ||
+      req.url.startsWith('/login') ||
+      req.url.startsWith('/logout')) {
+    return next();
+  }
+
+  const referer = req.headers.referer || '';
+  const productCookie = req.cookies.product || '';
+
+  // Now add prefix based on cookie/referer (only if URL doesn't have it yet)
+  if (referer.includes('/epidemicsound') || productCookie === 'epidemicsound') {
+    console.log(`🔀 [AUTO-ROUTER] ${req.url} → /epidemicsound${req.url}`);
+    req.url = `/epidemicsound${req.url}`;
+  }
+  else if (referer.includes('/vecteezy') || productCookie === 'vecteezy') {
+    console.log(`🔀 [AUTO-ROUTER] ${req.url} → /vecteezy${req.url}`);
+    req.url = `/vecteezy${req.url}`;
+  }
+  else if (referer.includes('/stealthwriter') || productCookie === 'stealthwriter') {
+    console.log(`🔀 [AUTO-ROUTER] ${req.url} → /stealthwriter${req.url}`);
+    req.url = `/stealthwriter${req.url}`;
+  }
+  else if (referer.includes('/turndetect') || productCookie === 'turndetect') {
+    console.log(`🔀 [AUTO-ROUTER] ${req.url} → /turndetect${req.url}`);
+    req.url = `/turndetect${req.url}`;
   }
   
-  next(); // Let other routes handle it
+  next();
 });
 
 // ============================================
-// STATIC JSON RESPONSES (for compatibility)
-// ============================================
-router.get('/elements-api/user_collections.json', (req, res) => {
-  console.log('📄 Serving static user_collections.json');
-  return res.json({ data: [] });
-});
-
-router.get('/elements-api/infrastructure_availability.json', (req, res) => {
-  console.log('📄 Serving static infrastructure_availability.json');
-  return res.json({
-    market: { available: true, scheduledMaintenance: false },
-    identity: { available: true, scheduledMaintenance: false },
-    rss: { available: true, scheduledMaintenance: false },
-    area51: { available: true, scheduledMaintenance: false }
-  });
-});
-
-// ============================================
-// PRODUCT ROUTES (MUST BE LAST)
+// PRODUCT ROUTES (MUST BE LAST!)
 // ============================================
 router.use('/flaticon', flaticonRoutes);
 console.log('✅ Registered /flaticon route');
@@ -218,7 +560,14 @@ console.log('✅ Registered /freepik route');
 
 router.use('/iconscout', iconscoutRoutes);
 console.log('✅ Registered /iconscout route');
- 
+
 router.use('/pikbest', pikbestRoutes);
 console.log('✅ Registered /pikbest route');
+
+router.use('/stealthwriter', stealthwriterRoutes);
+console.log('✅ Registered /stealthwriter route');
+
+router.use('/turndetect', turndetectRoutes);
+console.log('✅ Registered /turndetect route');
+
 export default router;

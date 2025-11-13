@@ -23,9 +23,11 @@ export default {
   
   // Domain replacement rules [find, replace]
   replaceRules: [
-    ['cdn.iconscout.com', 'localhost:8224/iconscout/cdn'],
-    ['assets.iconscout.com', 'localhost:8224/iconscout/assets'],
-    ['api.iconscout.com', 'localhost:8224/iconscout/api-domain']
+    ['cdn.iconscout.com', 'localhost:8224/iconscout/image/cdn'],      // ✅ Changed to localhost
+    ['cdn3d.iconscout.com', 'localhost:8224/iconscout/image/cdn3d'],  // ✅ Changed to localhost
+    ['cdna.iconscout.com', 'localhost:8224/iconscout/image/cdna'],    // ✅ Changed to localhost
+    ['assets.iconscout.com', 'localhost:8224/iconscout/image/assets'], // ✅ Changed to localhost
+    ['api.iconscout.com', 'localhost:8224/iconscout/api-domain']       // ✅ Changed to localhost
   ],
   
   // Custom headers for requests

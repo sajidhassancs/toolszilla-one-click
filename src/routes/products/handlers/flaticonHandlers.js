@@ -144,133 +144,117 @@ export async function processFlatIconPackDownload(req, res) {
   }
 }
 
-/**
- * Process individual icon download
- */
-/**
- * Process individual icon download
- */
 export async function processFlatIconIconDownload(req, res) {
   try {
     console.log('🖼️  Flaticon icon download request');
 
-    // Validate user session
     const userData = await decryptUserCookies(req);
-
     if (userData.redirect) {
       return res.redirect(userData.redirect);
     }
 
     const prefix = userData.prefix;
-
     if (!prefix) {
       console.log('❌ Missing prefix');
       return res.redirect('/expired');
     }
 
-    // Extract format and icon_id from URL
     const format = req.query.format || 'png';
     const iconId = req.query.icon_id || req.path.split('/').pop();
 
     console.log(`📥 Downloading icon: ${iconId}.${format}`);
 
-    // Get premium cookies WITHOUT verification
     const apiData = await getDataFromApiWithoutVerify(prefix);
-
-    // Handle both string and array formats
     let cookiesArray = apiData.access_configuration_preferences[0].accounts[0];
     
     if (typeof cookiesArray === 'string') {
-      console.log('⚠️  Cookies stored as string, parsing...');
       cookiesArray = JSON.parse(cookiesArray);
     }
     
-    console.log('🍪 Cookies type:', Array.isArray(cookiesArray) ? 'Array' : typeof cookiesArray);
-    
     const proxyAddress = apiData.access_configuration_preferences[1]?.proxies?.[0];
 
-    // Convert cookie objects to cookie string format
     let cookieString;
-    
     if (Array.isArray(cookiesArray)) {
-      cookieString = cookiesArray
-        .map(cookie => `${cookie.name}=${cookie.value}`)
-        .join('; ');
-      console.log('✅ Built cookie string from array');
+      cookieString = cookiesArray.map(cookie => `${cookie.name}=${cookie.value}`).join('; ');
     } else if (typeof cookiesArray === 'string') {
       const cookies = parseCookieString(cookiesArray);
       cookieString = cookiesToString(cookies);
-      console.log('✅ Used parseCookieString');
     } else {
       throw new Error('Invalid cookie format');
     }
 
-    // ✅ FIX: Remove /flaticon prefix from URL
     let cleanPath = req.originalUrl;
-    const productPrefix = `/${flaticonConfig.name}`;
-    
-    if (cleanPath.startsWith(productPrefix)) {
-      cleanPath = cleanPath.substring(productPrefix.length);
+    if (cleanPath.startsWith(`/${flaticonConfig.name}`)) {
+      cleanPath = cleanPath.substring(flaticonConfig.name.length + 1);
     }
-    
-    console.log('🔧 Original URL:', req.originalUrl);
-    console.log('🔧 Clean path:', cleanPath);
 
-    // Build upstream URL with clean path
-    let upstreamUrl = `https://${flaticonConfig.domain}${cleanPath}`;
-
+    const upstreamUrl = `https://${flaticonConfig.domain}${cleanPath}`;
     console.log('🎯 Icon download URL:', upstreamUrl);
 
-    // Setup headers
+    // ✅ ENHANCED HEADERS - More browser-like
     const flaticonHeaders = {
-      'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-      'accept-language': 'en-GB,en-US;q=0.9,en;q=0.8',
-      'referer': `https://${flaticonConfig.domain}/`,
+      'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+      'accept-encoding': 'gzip, deflate, br',
+      'accept-language': 'en-US,en;q=0.9',
+      'cache-control': 'no-cache',
+      'pragma': 'no-cache',
+      'referer': `https://${flaticonConfig.domain}/free-icons/`,  // ✅ Better referer
+      'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+      'sec-ch-ua-mobile': '?0',
+      'sec-ch-ua-platform': '"Windows"',
+      'sec-fetch-dest': 'document',
+      'sec-fetch-mode': 'navigate',
+      'sec-fetch-site': 'same-origin',
+      'sec-fetch-user': '?1',
+      'upgrade-insecure-requests': '1',
       'user-agent': USER_AGENT,
       'Cookie': cookieString
     };
 
-    // Make request
     const axiosConfig = {
       method: 'GET',
       url: upstreamUrl,
       headers: flaticonHeaders,
       responseType: 'arraybuffer',
-      validateStatus: () => true
+      validateStatus: () => true,
+      maxRedirects: 5,  // ✅ Follow redirects
+      timeout: 30000     // ✅ Longer timeout
     };
 
-    // Add proxy if available
     if (proxyAddress) {
       const [host, port] = proxyAddress.split(':');
-      axiosConfig.proxy = {
-        host,
-        port: parseInt(port, 10)
-      };
+      axiosConfig.proxy = { host, port: parseInt(port, 10) };
     }
 
     const response = await axios(axiosConfig);
 
     console.log('✅ Icon download response status:', response.status);
-    console.log('📦 Response headers:', response.headers);
+
+    if (response.status === 403) {
+      console.error('❌ 403 Forbidden - Cookies may be invalid or expired');
+      console.error('   Try refreshing your Flaticon premium cookies');
+      return res.status(403).send('Download forbidden - please refresh your premium cookies');
+    }
 
     if (response.status === 404) {
-      console.error('❌ Icon not found on Flaticon');
       return res.status(404).send('Icon not found');
     }
 
-    // Determine filename
+    if (response.status !== 200) {
+      return res.status(response.status).send('Download failed');
+    }
+
     const filename = `flaticon_${iconId}.${format}`;
-
-    // Add Content-Disposition header for download
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-
-    // Return the icon file
     const contentType = response.headers['content-type'] || `image/${format}`;
-    return res.status(response.status).type(contentType).send(Buffer.from(response.data));
+
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Length', response.data.byteLength || response.data.length);
+    
+    return res.status(200).send(response.data);
 
   } catch (error) {
     console.error('❌ Error in Flaticon icon download:', error.message);
-    console.error('   Stack:', error.stack);
     return res.status(500).json({ 
       error: 'Icon download failed',
       message: error.message 

@@ -209,7 +209,7 @@ export async function handleProxyRequest(req, res, productConfig) {
         const fromDomain = assetDomain.from;
         const toPath = assetDomain.to;
         
-        // Replace https://domain with http://localhost:8224/product/path
+       
         htmlContent = htmlContent.replace(
           new RegExp(`https://${fromDomain.replace(/\./g, '\\.')}`, 'g'),
           `http://${req.get('host')}${productPrefix}${toPath}`

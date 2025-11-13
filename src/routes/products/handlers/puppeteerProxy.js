@@ -60,33 +60,58 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
     browser = await getBrowser();
     const page = await browser.newPage();
 
-    // ✅ SETUP REQUEST HANDLER FIRST (BEFORE ENABLING INTERCEPTION)
+    // ✅ CRITICAL FIX: ENABLE INTERCEPTION FIRST!
+    await page.setRequestInterception(true);
+
+    // ✅ THEN SETUP REQUEST HANDLER
     page.on('request', (request) => {
       const url = request.url();
       const resourceType = request.resourceType();
       
-      // Block tracking, analytics, and unnecessary resources
- if (
-  url.includes('bat.bing.com') ||
-  url.includes('google-analytics.com') ||
-  url.includes('googletagmanager.com') ||
-  url.includes('doubleclick.net') ||
-  url.includes('facebook.com/tr') ||
-  url.includes('clarity.ms') ||
-  url.includes('hotjar.com') ||
-  url.includes('connect.facebook.net') ||
-  url.includes('analytics.tiktok.com')
-  // ✅ Removed font blocking
-) {
-        console.log('🚫 BLOCKED:', url);
-        request.abort();
-      } else {
-        request.continue();
+      // ✅ AGGRESSIVE BLOCKING: Block analytics and tracking
+      const blockedPatterns = [
+        'bat.bing.com',
+        'bat.bing.net',
+        'google-analytics.com',
+        'googletagmanager.com',
+        'doubleclick.net',
+        'facebook.com/tr',
+        'connect.facebook.net',
+        'clarity.ms',
+        'hotjar.com',
+        'hotjar.io',
+        'metrics.hotjar.io',  // ✅ FIX YOUR ISSUE!
+        'vars.hotjar.com',
+        'script.hotjar.com',
+        'static.hotjar.com',
+        'analytics.tiktok.com',
+        'sentry.io',
+        'cdn.onetrust.com',
+        'cookielaw.org',
+        'geotrust.com',
+        'otBannerSdk.js',
+        'js.hs-scripts.com',
+        '/actions_tkcdp',
+        '/actionp/',
+        'tt.co',
+        'facebook.net',
+        'Meta Pixel'
+      ];
+      
+      // Check if URL matches any blocked pattern
+      if (blockedPatterns.some(pattern => url.includes(pattern))) {
+        console.log(`🚫 Blocked: ${url}`);
+        return request.abort('blockedbyclient');
       }
+      
+      // ✅ Also block beacon/ping requests
+      if (resourceType === 'beacon' || resourceType === 'ping') {
+        console.log(`🚫 Blocked ${resourceType}: ${url}`);
+        return request.abort('blockedbyclient');
+      }
+      
+      return request.continue();
     });
-
-    // ✅ THEN ENABLE INTERCEPTION
-    await page.setRequestInterception(true);
 
     // Set cookies
     const puppeteerCookies = cookiesArray.map(cookie => ({
@@ -148,66 +173,70 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
       }
     }, productPrefix);
 
-// Navigate to page with extensive debugging
-console.log('🚀 Attempting to load page...');
+    // Navigate to page with extensive debugging
+    console.log('🚀 Attempting to load page...');
 
-// Log all network requests
-page.on('response', (response) => {
-  if (!response.ok()) {
-    console.log(`⚠️  Failed request: ${response.status()} ${response.url()}`);
-  }
-});
+    // Log all network requests
+    page.on('response', (response) => {
+      if (!response.ok()) {
+        console.log(`⚠️  Failed request: ${response.status()} ${response.url()}`);
+      }
+    });
 
-// Try to load with a very permissive strategy
-try {
-  await page.goto(targetUrl, { 
-    waitUntil: 'domcontentloaded',
-    timeout: 90000  // 90 seconds
-  });
-  console.log('✅ Page loaded successfully');
-} catch (error) {
-  console.error('❌ Page load failed:', error.message);
-  
-  // Try to get partial content anyway
-  console.log('🔄 Attempting to get partial content...');
-  try {
-    const content = await page.content();
-    if (content && content.length > 100) {
-      console.log('✅ Got partial content, proceeding...');
-      // Don't throw, continue with what we have
-    } else {
-      throw error;
+    // Try to load with a very permissive strategy
+    try {
+      await page.goto(targetUrl, { 
+        waitUntil: 'domcontentloaded',
+        timeout: 30000
+      });
+      console.log('✅ Page loaded successfully');
+    } catch (error) {
+      console.error('❌ Page load failed:', error.message);
+      
+      // Try to get partial content anyway
+      console.log('🔄 Attempting to get partial content...');
+      try {
+        const content = await page.content();
+        if (content && content.length > 100) {
+          console.log('✅ Got partial content, proceeding...');
+        } else {
+          throw error;
+        }
+      } catch (contentError) {
+        throw error;
+      }
     }
-  } catch (contentError) {
-    throw error; // Re-throw original error
-  }
-}
 
     // Get page content
-let html = await page.content();
+    let html = await page.content();
 
-// ✅ IMPROVED URL REWRITING
-console.log('🔧 Rewriting URLs in HTML...');
+    // ✅ IMPROVED URL REWRITING
+    console.log('🔧 Rewriting URLs in HTML...');
 
-const localProxyBase = `http://${req.get('host')}${productPrefix}`;
+    const localProxyBase = `http://${req.get('host')}${productPrefix}`;
 
-// 🔥 INJECT BASE TAG - This forces ALL relative URLs to use /freepik/ prefix
-const baseTag = `<base href="${localProxyBase}/">`;
-if (html.includes('<head>')) {
-  html = html.replace('<head>', `<head>${baseTag}`);
-} else if (html.includes('<html>')) {
-  html = html.replace('<html>', `<html><head>${baseTag}</head>`);
-}
-console.log('   ✅ Injected base tag:', baseTag);
+    // 🔥 CONDITIONAL BASE TAG - Skip for Epidemic Sound (prevents double prefixing)
+    if (productConfig.name !== 'epidemicsound') {
+      const baseTag = `<base href="${localProxyBase}/">`;
+      if (html.includes('<head>')) {
+        html = html.replace('<head>', `<head>${baseTag}`);
+      } else if (html.includes('<html>')) {
+        html = html.replace('<html>', `<html><head>${baseTag}</head>`);
+      }
+      console.log('   ✅ Injected base tag:', baseTag);
+    } else {
+      console.log('   ⚠️ Skipped base tag for Epidemic Sound (prevents double prefixing)');
+    }
 
-// 1. Replace absolute domain URLs
-html = html.replace(
-  new RegExp(`https://${productConfig.domain.replace(/\./g, '\\.')}`, 'g'),
-  localProxyBase
-);
+    // 1. Replace absolute domain URLs
+    html = html.replace(
+      new RegExp(`https://${productConfig.domain.replace(/\./g, '\\.')}`, 'g'),
+      localProxyBase
+    );
 
-    // 🔥 NEW: Fix API calls and manifest in JavaScript/JSON
+    // 🔥 Fix API calls and manifest in JavaScript/JSON
     html = html.replace(/["']\/api\//g, `"${productPrefix}/api/`);
+    html = html.replace(/["']\/session\//g, `"${productPrefix}/session/`);
     html = html.replace(/["']\/manifest\.json/g, `"${productPrefix}/manifest.json`);
 
     // 3. Fix relative paths (starting with /)
@@ -308,30 +337,35 @@ export async function proxyAssetWithPuppeteer(req, res, productConfig, assetDoma
     browser = await getBrowser();
     const page = await browser.newPage();
 
-    // ✅ SETUP REQUEST HANDLER FIRST
+    // ✅ ENABLE INTERCEPTION FIRST
+    await page.setRequestInterception(true);
+
+    // ✅ THEN SETUP REQUEST HANDLER
     page.on('request', (request) => {
       const url = request.url();
-      const resourceType = request.resourceType();
       
-    if (
-  url.includes('bat.bing.com') ||
-  url.includes('google-analytics.com') ||
-  url.includes('googletagmanager.com') ||
-  url.includes('doubleclick.net') ||
-  url.includes('facebook.com/tr') ||
-  url.includes('clarity.ms') ||
-  url.includes('hotjar.com')
-  // ✅ Removed font blocking
-) {
+      if (
+        url.includes('bat.bing.com') ||
+        url.includes('bat.bing.net') ||
+        url.includes('google-analytics.com') ||
+        url.includes('googletagmanager.com') ||
+        url.includes('doubleclick.net') ||
+        url.includes('facebook.com/tr') ||
+        url.includes('connect.facebook.net') ||
+        url.includes('clarity.ms') ||
+        url.includes('hotjar.com') ||
+        url.includes('hotjar.io') ||
+        url.includes('metrics.hotjar.io') ||
+        url.includes('cdn.onetrust.com') ||
+        url.includes('cookielaw.org') ||
+        url.includes('sentry.io')
+      ) {
         console.log('🚫 BLOCKED:', url);
-        request.abort();
+        return request.abort('blockedbyclient');
       } else {
-        request.continue();
+        return request.continue();
       }
     });
-
-    // ✅ THEN ENABLE INTERCEPTION
-    await page.setRequestInterception(true);
 
     // Set cookies
     const puppeteerCookies = cookiesArray.map(cookie => ({
@@ -347,7 +381,7 @@ export async function proxyAssetWithPuppeteer(req, res, productConfig, assetDoma
 
     await page.setCookie(...puppeteerCookies);
 
-    // Fetch asset - ✅ FASTER LOADING
+    // Fetch asset
     const response = await page.goto(assetUrl, {
       waitUntil: 'domcontentloaded',
       timeout: 15000

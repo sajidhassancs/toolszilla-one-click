@@ -56,7 +56,7 @@ export async function getPremiumCookies(prefix, index = 0, includeProxy = false)
 }
 
 /**
- * Decrypt all user cookies from request
+ * Decrypt all user cookies from request (WITH session check)
  */
 export async function decryptUserCookies(req) {
   const rawAuthToken = req.cookies.auth_token;
@@ -122,7 +122,59 @@ export async function decryptUserCookies(req) {
   }
 }
 
-// ✅ Check dashboard session using oneclick session-check endpoint
+/**
+ * Decrypt user cookies WITHOUT dashboard session check (for faster CDN requests)
+ */
+export async function decryptUserCookiesNoSessionCheck(req) {
+  const rawAuthToken = req.cookies.auth_token;
+  const rawPrefix = req.cookies.prefix;
+  const product = req.cookies.product;
+  const site = req.cookies.site;
+  const userEmail = req.cookies.user_email;
+  const timeStampRaw = req.cookies.ttl;
+
+  // Validate required cookies
+  if (!rawAuthToken || !rawPrefix || !product || !site || !timeStampRaw) {
+    return { redirect: '/expired' };
+  }
+
+  // Decrypt and validate timestamp
+  try {
+    const timeStampDec = decryptCookieValue(timeStampRaw);
+    const timeStampInt = parseInt(timeStampDec, 10);
+
+    if (isExpired(timeStampInt, COOKIE_EXPIRATION_HOURS)) {
+      return { redirect: '/expired' };
+    }
+  } catch (error) {
+    console.error('❌ Error decrypting timestamp:', error.message);
+    return { redirect: '/expired' };
+  }
+
+  // Decrypt all cookies (NO session check)
+  try {
+    const authToken = decryptCookieValue(rawAuthToken);
+    const prefix = decryptCookieValue(rawPrefix);
+    const productDec = decryptCookieValue(product);
+    const siteDec = decryptCookieValue(site);
+    const userEmailDec = userEmail ? decryptCookieValue(userEmail) : null;
+
+    return {
+      auth_token: authToken,
+      prefix: prefix,
+      product: productDec,
+      site: siteDec,
+      user_email: userEmailDec
+    };
+  } catch (error) {
+    console.error('❌ Error decrypting user cookies:', error.message);
+    return { redirect: '/expired' };
+  }
+}
+
+/**
+ * Check dashboard session using oneclick session-check endpoint
+ */
 async function checkDashboardSession(email, authToken) {
   try {
     console.log('🔍 Checking dashboard session for:', email);
@@ -131,13 +183,12 @@ async function checkDashboardSession(email, authToken) {
     console.log('📞 Calling:', url);
     
     const response = await axios.post(url, {
-      email: email  // ✅ CHANGED: Send email in body
+      email: email
     }, {
       headers: {
         'Content-Type': 'application/json'
-        // ✅ REMOVED: Authorization header
       },
-      timeout: 3000,
+      timeout: 15000,  // ✅ Increased from 3000 to 15000
       validateStatus: () => true
     });
 
@@ -161,7 +212,6 @@ async function checkDashboardSession(email, authToken) {
 
   } catch (error) {
     console.error('⚠️ Dashboard validation failed:', error.message);
-    return false;
+    return false;  // Allow access even if dashboard check fails (for resilience)
   }
 }
- 

@@ -22,8 +22,7 @@ export async function getDataFromApi(authToken, prefix) {
         params: { prefix }
       }
     );
-    
-    console.log('✅ API Response:', JSON.stringify(response.data, null, 2));
+     
     return response.data;
   } catch (error) {
     console.error('❌ Error getting data from API:', error.message);
@@ -50,8 +49,7 @@ export async function getDataFromApiWithoutVerify(prefix) {
         headers: { Authorization: API_KEY }
       } 
     );
-    
-    console.log('✅ API Response:', JSON.stringify(response.data, null, 2));
+ 
     return response.data;
   } catch (error) {
     console.error('❌ Error getting data from API without verify:', error.message);

@@ -1,19 +1,19 @@
 /**
- * Epidemic Sound Product Configuration
+ * StealthWriter Product Configuration
  */
 export default {
   // Basic Info
-  name: 'epidemicsound',
-  displayName: 'Epidemic Sound',
+  name: 'stealthwriter',
+  displayName: 'StealthWriter',
   
   // Target Website
-  domain: 'www.epidemicsound.com',
+  domain: 'app.stealthwriter.ai',
   
-  // ✅ FIXED: Proper redirect path (this is where users land)
-  redirectPath: '/music/featured/?override_referrer=',
+  // Redirect path after login
+  redirectPath: '/',
   
   // Banned paths (product-specific, env vars will also apply)
-  bannedPaths: [],
+  bannedPaths: [],  // ✅ Empty - we're using BANNED_URL_PATHS from .env
   
   // Proxy port (if running standalone)
   proxyPort: 8224,
@@ -23,27 +23,24 @@ export default {
   
   // Domain replacement rules [find, replace]
   replaceRules: [
-    ['static.epidemicsound.com', 'localhost:8224/epidemicsound/static'],
-    ['cdn.epidemicsound.com', 'localhost:8224/epidemicsound/cdn'],
-    ['assets.epidemicsound.com', 'localhost:8224/epidemicsound/assets'],
-    ['images.epidemicsound.com', 'localhost:8224/epidemicsound/images'],
-    ['media.epidemicsound.com', 'localhost:8224/epidemicsound/media']
+    ['cdn.stealthwriter.ai', 'localhost:8224/stealthwriter/cdn'],
+    ['api.stealthwriter.ai', 'localhost:8224/stealthwriter/api']
   ],
   
   // Custom headers for requests
   customHeaders: {
     'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-    'accept-language': 'en-US,en;q=0.9',
+    'accept-language': 'en-GB,en-US;q=0.9,en;q=0.8',
     'cache-control': 'max-age=0',
     'sec-ch-ua': '"Not;A=Brand";v="99", "Google Chrome";v="139", "Chromium";v="139"',
     'sec-ch-ua-mobile': '?0',
     'sec-ch-ua-platform': '"Windows"',
     'sec-fetch-dest': 'document',
     'sec-fetch-mode': 'navigate',
-    'sec-fetch-site': 'same-origin',
+    'sec-fetch-site': 'none',
     'sec-fetch-user': '?1',
     'upgrade-insecure-requests': '1',
-    'accept-encoding': 'gzip, deflate, br'
+    'accept-encoding': 'gzip'
   },
   
   // Custom cookies (if any static cookies needed)

@@ -91,16 +91,11 @@ export async function proxyIconscoutAPI(req, res) {
     return res.status(500).json({ error: 'API proxy error' });
   }
 }
-/**
- * Proxy Iconscout CDN assets (cdna, cdn3d, cdn)
- */
 export async function proxyIconscoutCDN(req, res) {
   try {
-    // ✅ GET AUTHENTICATION COOKIES
     const userData = await decryptUserCookies(req);
     let cookieString = '';
     
-    // If user is authenticated, get their cookies
     if (!userData.redirect) {
       try {
         const prefix = userData.prefix;
@@ -115,11 +110,11 @@ export async function proxyIconscoutCDN(req, res) {
           .map(cookie => `${cookie.name}=${cookie.value}`)
           .join('; ');
       } catch (e) {
-        console.log('⚠️ Could not get cookies for CDN, trying without auth');
+        console.log('⚠️ Could not get cookies for CDN');
       }
     }
     
-    // Determine which CDN based on the route
+    // ✅ Updated to handle /image prefix
     let cdnDomain;
     if (req.originalUrl.includes('/cdna')) {
       cdnDomain = 'cdna.iconscout.com';
@@ -129,26 +124,34 @@ export async function proxyIconscoutCDN(req, res) {
       cdnDomain = 'cdn.iconscout.com';
     }
     
-    // Get the asset path
+    // ✅ Updated to remove /image prefix
     let assetPath = req.originalUrl
-      .replace('/iconscout/cdna', '')
-      .replace('/iconscout/cdn3d', '')
-      .replace('/iconscout/cdn', '');
+      .replace('/iconscout/image/cdna', '')
+      .replace('/iconscout/image/cdn3d', '')
+      .replace('/iconscout/image/cdn', '')
+      .replace('/iconscout/cdna', '')    // Fallback for old URLs
+      .replace('/iconscout/cdn3d', '')   // Fallback for old URLs
+      .replace('/iconscout/cdn', '');     // Fallback for old URLs
     
     const targetUrl = `https://${cdnDomain}${assetPath}`;
     
     console.log('🎨 Proxying CDN asset:', targetUrl);
     
-    // ✅ Make request WITH cookies
+    // ✅ CRITICAL: Use proper referer from the request
+    const referer = req.headers.referer || 'https://iconscout.com/3d-icons';
+    
     const response = await axios.get(targetUrl, {
       responseType: 'arraybuffer',
       headers: {
         'User-Agent': USER_AGENT,
-        'Accept': req.headers.accept || '*/*',
+        'Accept': req.headers.accept || 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
         'Accept-Encoding': 'gzip, deflate, br',
-        'Referer': 'https://iconscout.com/',
+        'Referer': referer,  // ✅ Pass the actual page referer
         'Origin': 'https://iconscout.com',
-        'Cookie': cookieString, // ✅ Include authentication cookies
+        'Cookie': cookieString,
+        'sec-fetch-dest': 'image',
+        'sec-fetch-mode': 'no-cors',
+        'sec-fetch-site': 'same-site'
       },
       validateStatus: () => true,
       timeout: 15000,
@@ -157,15 +160,17 @@ export async function proxyIconscoutCDN(req, res) {
     
     console.log('✅ CDN response:', response.status);
     
-    // ✅ Handle 403/404 gracefully
     if (response.status === 403 || response.status === 404) {
-      console.log('⚠️ CDN blocked or not found, returning empty');
-      return res.status(200).send('');
+      console.log('⚠️ CDN blocked:', response.status);
+      // Return 1x1 transparent pixel instead of empty
+      const transparentPixel = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+      res.set('Content-Type', 'image/png');
+      res.set('Cache-Control', 'public, max-age=31536000');
+      return res.status(200).send(transparentPixel);
     }
     
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
-    res.set('Access-Control-Allow-Headers', '*');
     res.set('Cache-Control', 'public, max-age=31536000');
     
     if (response.headers['content-type']) {
@@ -175,11 +180,12 @@ export async function proxyIconscoutCDN(req, res) {
     return res.status(response.status).send(response.data);
   } catch (error) {
     console.error('❌ Error proxying CDN:', error.message);
-    // Return empty instead of error to prevent page breaking
-    return res.status(200).send('');
+    // Return transparent pixel on error
+    const transparentPixel = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+    res.set('Content-Type', 'image/png');
+    return res.status(200).send(transparentPixel);
   }
 }
-
 /**
  * Proxy Iconscout assets
  */
@@ -215,8 +221,11 @@ export async function proxyIconscoutAssets(req, res) {
       .map(cookie => `${cookie.name}=${cookie.value}`)
       .join('; ');
 
-    // Get the asset path
-    const assetPath = req.originalUrl.replace('/iconscout/assets', '');
+    // ✅ Updated to handle /image prefix
+    const assetPath = req.originalUrl
+      .replace('/iconscout/image/assets', '')
+      .replace('/iconscout/assets', '');  // Fallback for old URLs
+    
     const targetUrl = `https://assets.iconscout.com${assetPath}`;
     
     console.log('🎨 Proxying Iconscout assets:', targetUrl);
