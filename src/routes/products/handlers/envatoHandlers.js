@@ -522,11 +522,11 @@ export async function proxyEnvatoApi(req, res, apiType) {
       .map(cookie => `${cookie.name}=${cookie.value}`)
       .join('; ');
 
-    // Build target URL
-    const queryString = req.url.includes('?') ? req.url.substring(req.url.indexOf('?')) : '';
-    const targetUrl = `https://elements.envato.com${req.path}${queryString}`;
-    
-    console.log(`🎯 Proxying ${apiType} request:`, targetUrl);
+// Build target URL - preserve the API type in the path
+const queryString = req.url.includes('?') ? req.url.substring(req.url.indexOf('?')) : '';
+const targetUrl = `https://elements.envato.com/${apiType}${req.path}${queryString}`;
+
+console.log(`🎯 Proxying ${apiType} request:`, targetUrl);
     
     const response = await axios({
       method: req.method,

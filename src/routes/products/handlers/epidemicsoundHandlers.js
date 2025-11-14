@@ -1,19 +1,14 @@
 /**
- * Epidemic Sound Specific Handlers
- * Handles cookie rotation and request proxying
+ * SIMPLIFIED Epidemic Sound Handler
+ * Minimal processing to avoid breaking the page
  */
- 
+
 import epidemicsoundConfig from '../../../../products/epidemicsound.js';
 import axios from 'axios';
 import { decryptUserCookies } from '../../../services/cookieService.js';
 import { getDataFromApiWithoutVerify } from '../../../services/apiService.js';
 import { USER_AGENT } from '../../../utils/constants.js';
-// Keep Puppeteer import as fallback
-import { proxyWithPuppeteer } from './puppeteerProxy.js';
 
-/**
- * Get current cookie/proxy index based on 10-minute rotation
- */
 function getCurrentRotationIndex(totalAccounts) {
   const now = new Date();
   const currentHour = now.getHours();
@@ -24,22 +19,12 @@ function getCurrentRotationIndex(totalAccounts) {
 }
 
 /**
- * Main Epidemic Sound proxy handler using Puppeteer (FALLBACK)
- * Used only if Axios version has issues
- */
-export async function proxyEpidemicsoundWithPuppeteer(req, res) {
-  return await proxyWithPuppeteer(req, res, epidemicsoundConfig);
-}
-
-/**
- * ✅ MAIN EPIDEMIC SOUND PROXY (AXIOS-BASED)
- * This is the PRIMARY handler - faster and more reliable than Puppeteer
+ * SIMPLIFIED Axios proxy - minimal HTML rewriting
  */
 export async function proxyEpidemicsoundWithAxios(req, res) {
   try {
     console.log('🎵 [AXIOS] Epidemic Sound request:', req.method, req.originalUrl);
 
-    // Get user cookies
     const userData = await decryptUserCookies(req);
     
     if (userData.redirect) {
@@ -47,8 +32,6 @@ export async function proxyEpidemicsoundWithAxios(req, res) {
     }
 
     const prefix = userData.prefix;
-    
-    // Get premium cookies
     const apiData = await getDataFromApiWithoutVerify(prefix);
     const accountsArray = apiData.access_configuration_preferences[0].accounts;
     
@@ -56,64 +39,34 @@ export async function proxyEpidemicsoundWithAxios(req, res) {
       return res.status(500).json({ error: 'No Epidemic Sound accounts available' });
     }
 
-    // Get current rotation index
     const currentIndex = getCurrentRotationIndex(accountsArray.length);
     let cookiesArray = accountsArray[currentIndex];
     
-    console.log(`🔄 Using Epidemic Sound account ${currentIndex + 1}/${accountsArray.length}`);
-    
-    // Handle both string and array formats
     if (typeof cookiesArray === 'string') {
-      console.log('⚠️  Cookies stored as string, parsing...');
-      try {
-        cookiesArray = JSON.parse(cookiesArray);
-      } catch (e) {
-        console.error('❌ Failed to parse cookie string:', e.message);
-        return res.status(500).json({ error: 'Invalid cookie format' });
-      }
+      cookiesArray = JSON.parse(cookiesArray);
     }
     
-    console.log('🍪 Cookies type:', Array.isArray(cookiesArray) ? 'Array' : typeof cookiesArray);
-    
-    // Convert cookie objects to cookie string
-    let cookieString;
-    if (Array.isArray(cookiesArray)) {
-      cookieString = cookiesArray
-        .map(cookie => `${cookie.name}=${cookie.value}`)
-        .join('; ');
-      console.log(`✅ Built cookie string from array (${cookiesArray.length} cookies)`);
-    } else {
-      console.error('❌ Invalid cookie format after parsing');
-      return res.status(500).json({ error: 'Invalid cookie format' });
-    }
+    const cookieString = cookiesArray
+      .map(cookie => `${cookie.name}=${cookie.value}`)
+      .join('; ');
 
-    // Build target URL - clean path
-    const productPrefix = '/epidemicsound';
-    let cleanPath = req.originalUrl;
+    // Build target URL - keep it simple
+    let cleanPath = req.originalUrl.replace('/epidemicsound', '');
     
-    if (cleanPath.startsWith(productPrefix)) {
-      cleanPath = cleanPath.substring(productPrefix.length);
+    if (!cleanPath || cleanPath === '/' || cleanPath === '') {
+      cleanPath = '/music/featured/?override_referrer=';
     }
     
-    if (!cleanPath || cleanPath === '' || cleanPath === '/') {
-      cleanPath = epidemicsoundConfig.redirectPath || '/music/featured/';
-    }
-    
-    if (!cleanPath.startsWith('/')) {
-      cleanPath = '/' + cleanPath;
-    }
-    
-    const targetUrl = `https://${epidemicsoundConfig.domain}${cleanPath}`;
+    const targetUrl = `https://www.epidemicsound.com${cleanPath}`;
     
     console.log('🎯 Target URL:', targetUrl);
     
-    // Make request to Epidemic Sound
     const response = await axios({
       method: req.method,
       url: targetUrl,
       headers: {
         ...epidemicsoundConfig.customHeaders,
-        'referer': `https://${epidemicsoundConfig.domain}/`,
+        'referer': 'https://www.epidemicsound.com/',
         'user-agent': USER_AGENT,
         'Cookie': cookieString
       },
@@ -126,164 +79,127 @@ export async function proxyEpidemicsoundWithAxios(req, res) {
     
     console.log(`✅ Epidemic Sound response: ${response.status}`);
     
-    // Set CORS headers
-    res.set('Access-Control-Allow-Origin', '*');
-    
-    // Copy content type
     const contentType = response.headers['content-type'] || 'application/octet-stream';
-    if (contentType) {
-      res.set('Content-Type', contentType);
-    }
     
-    // Get current host for dynamic replacements
-    const currentHost = `${req.protocol}://${req.get('host')}`;
+    // Set headers
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Content-Type', contentType);
     
-    // Handle HTML responses - rewrite URLs
+    // Only process HTML
     if (contentType.includes('text/html')) {
       let html = response.data.toString('utf-8');
       
-      console.log('🔧 Rewriting asset URLs for epidemicsound');
+      const currentHost = `${req.protocol}://${req.get('host')}`;
       
-      // Replace absolute domain URLs
-      html = html.replace(/https:\/\/www\.epidemicsound\.com/g, `${currentHost}/epidemicsound`);
-      html = html.replace(/https:\/\/static\.epidemicsound\.com/g, `${currentHost}/epidemicsound/static`);
-      html = html.replace(/https:\/\/cdn\.epidemicsound\.com/g, `${currentHost}/epidemicsound/cdn`);
-      html = html.replace(/https:\/\/assets\.epidemicsound\.com/g, `${currentHost}/epidemicsound/assets`);
-      html = html.replace(/https:\/\/images\.epidemicsound\.com/g, `${currentHost}/epidemicsound/images`);
-      html = html.replace(/https:\/\/media\.epidemicsound\.com/g, `${currentHost}/epidemicsound/media`);
-      
-      // Rewrite asset paths to go through /epidemicsound proxy
-      html = html.replace(/href="\/(?!epidemicsound)/g, 'href="/epidemicsound/');
-      html = html.replace(/href='\/(?!epidemicsound)/g, "href='/epidemicsound/");
-      
-      html = html.replace(/src="\/(?!epidemicsound)/g, 'src="/epidemicsound/');
-      html = html.replace(/src='\/(?!epidemicsound)/g, "src='/epidemicsound/");
-      
-      html = html.replace(/srcset="\/(?!epidemicsound)/g, 'srcset="/epidemicsound/');
-      html = html.replace(/srcset='\/(?!epidemicsound)/g, "srcset='/epidemicsound/");
-      
-      // Rewrite URLs in CSS
-      html = html.replace(/url\(\/(?!epidemicsound)/g, 'url(/epidemicsound/');
-      html = html.replace(/url\("\/(?!epidemicsound)/g, 'url("/epidemicsound/');
-      html = html.replace(/url\('\/(?!epidemicsound)/g, "url('/epidemicsound/");
-      
-      // Fix API paths in JavaScript
-      html = html.replace(/["']\/api\//g, '"/epidemicsound/api/');
-      html = html.replace(/["']\/session\//g, '"/epidemicsound/session/');
-      
-      // Fix double slashes that might have been created
-      html = html.replace(/\/epidemicsound\/epidemicsound\//g, '/epidemicsound/');
-      
-      // ✅ INJECT ANALYTICS BLOCKER SCRIPT
-      const blockAnalyticsScript = `
+      // ✅ CRITICAL: Inject analytics blocker FIRST - must run BEFORE any other scripts
+      const analyticsBlocker = `
         <script>
         (function() {
+          'use strict';
           console.log('🚫 Analytics blocker initialized');
           
-          // Block Hotjar and other analytics
-          window.hj = function() { console.log('🚫 Blocked hj()'); };
-          window.hjBootstrap = function() { console.log('🚫 Blocked hjBootstrap()'); };
-          window._hjSettings = { hjid: 0, hjsv: 0 };
+          // Block list - comprehensive
+          const blockedDomains = [
+            'bat.bing.com',
+            'hotjar',
+            'google-analytics',
+            'doubleclick',
+            'facebook.net',
+            'sentry.io',
+            'metrics.hotjar',
+            'static.hotjar',
+            'script.hotjar',
+            'vars.hotjar'
+          ];
           
-          // Intercept fetch to block analytics
+          // Intercept fetch IMMEDIATELY
           const originalFetch = window.fetch;
           window.fetch = function(...args) {
-            const url = typeof args[0] === 'string' ? args[0] : args[0].url;
-            if (typeof url === 'string' && (
-              url.includes('hotjar') ||
-              url.includes('google-analytics') ||
-              url.includes('facebook.net') ||
-              url.includes('doubleclick') ||
-              url.includes('metrics.hotjar.io')
-            )) {
-              console.log('🚫 Blocked fetch:', url);
-              return Promise.resolve(new Response('', { status: 200 }));
+            const url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url) || '';
+            if (blockedDomains.some(d => url.includes(d))) {
+              console.log('🚫 Blocked fetch:', url.substring(0, 50));
+              return Promise.resolve(new Response('{}', { 
+                status: 200,
+                statusText: 'OK',
+                headers: { 'Content-Type': 'application/json' }
+              }));
             }
             return originalFetch.apply(this, args);
           };
           
-          // Intercept XHR to block analytics
+          // Intercept XHR IMMEDIATELY
           const originalOpen = XMLHttpRequest.prototype.open;
           XMLHttpRequest.prototype.open = function(method, url, ...rest) {
-            if (typeof url === 'string' && (
-              url.includes('hotjar') ||
-              url.includes('google-analytics') ||
-              url.includes('facebook.net') ||
-              url.includes('doubleclick') ||
-              url.includes('metrics.hotjar.io')
-            )) {
-              console.log('🚫 Blocked XHR:', url);
+            if (typeof url === 'string' && blockedDomains.some(d => url.includes(d))) {
+              console.log('🚫 Blocked XHR:', url.substring(0, 50));
+              this._blocked = true;
               this.send = function() {};
+              this.abort = function() {};
+              setTimeout(() => {
+                if (this.onload) this.onload();
+                if (this.onreadystatechange) this.onreadystatechange();
+              }, 0);
               return;
             }
             return originalOpen.call(this, method, url, ...rest);
           };
           
-          // Block script loading
-          const originalCreateElement = document.createElement;
-          document.createElement = function(tagName) {
-            const element = originalCreateElement.call(document, tagName);
-            if (tagName.toLowerCase() === 'script') {
-              const originalSetAttribute = element.setAttribute;
-              element.setAttribute = function(name, value) {
-                if (name === 'src' && typeof value === 'string' && (
-                  value.includes('hotjar') ||
-                  value.includes('google-analytics') ||
-                  value.includes('facebook.net') ||
-                  value.includes('doubleclick')
-                )) {
-                  console.log('🚫 Blocked script:', value);
-                  return;
+          // Block script loading IMMEDIATELY
+          const observer = new MutationObserver((mutations) => {
+            mutations.forEach((mutation) => {
+              mutation.addedNodes.forEach((node) => {
+                if (node.tagName === 'SCRIPT' && node.src && blockedDomains.some(d => node.src.includes(d))) {
+                  console.log('🚫 Blocked script tag:', node.src.substring(0, 50));
+                  node.remove();
                 }
-                return originalSetAttribute.call(this, name, value);
-              };
-            }
-            return element;
-          };
+              });
+            });
+          });
+          observer.observe(document.documentElement, { childList: true, subtree: true });
+          
+          // Stub analytics objects
+          window.hj = window.hj || function() { console.log('🚫 Blocked hj()'); };
+          window.hjBootstrap = window.hjBootstrap || function() { console.log('🚫 Blocked hjBootstrap()'); };
+          window._hjSettings = { hjid: 0, hjsv: 0 };
+          
+          console.log('✅ Analytics blocker ready');
         })();
         </script>
       `;
       
-      // Inject script right after <head> tag
+      // Inject at start of <head>
       if (html.includes('<head>')) {
-        html = html.replace('<head>', `<head>${blockAnalyticsScript}`);
-        console.log('   ✅ Injected analytics blocker script');
+        html = html.replace('<head>', `<head>${analyticsBlocker}`);
       }
       
-      console.log('   ✅ Rewritten URLs to route through /epidemicsound');
+      // ✅ CRITICAL: Add base tag for SPA routing
+      const baseTag = '<base href="/epidemicsound/">';
+      if (html.includes('</head>')) {
+        html = html.replace('</head>', `${baseTag}</head>`);
+        console.log('   ✅ Injected base tag for SPA routing');
+      }
+      
+      // ✅ DO NOT ADD PREFIX - Keep URLs clean for SPA routing
+      // The product cookie will handle routing, not URL prefixes
+      
+      // Just rewrite external domains to go through our proxy
+      html = html.replace(/https:\/\/static\.epidemicsound\.com/g, `${currentHost}/epidemicsound/static`);
+      html = html.replace(/https:\/\/cdn\.epidemicsound\.com/g, `${currentHost}/epidemicsound/cdn`);
+      html = html.replace(/https:\/\/images\.epidemicsound\.com/g, `${currentHost}/epidemicsound/images`);
+      html = html.replace(/https:\/\/media\.epidemicsound\.com/g, `${currentHost}/epidemicsound/media`);
+      
+      // ✅ CRITICAL: Fix JavaScript API paths WITHOUT adding /epidemicsound prefix
+      // The auto-router will handle adding the prefix based on cookies
+      // So these paths will stay as /session/, /api/, etc.
+      
+      console.log('✅ HTML rewritten with analytics blocker (URLs kept clean)');
       
       return res.status(response.status).send(html);
     }
     
-    // Handle JavaScript - rewrite URLs
-    if (contentType.includes('javascript') || contentType.includes('text/javascript')) {
-      let js = response.data.toString('utf-8');
-      
-      // Replace API paths
-      js = js.replace(/["']\/api\//g, '"/epidemicsound/api/');
-      js = js.replace(/["']\/session\//g, '"/epidemicsound/session/');
-      
-      // Replace asset domains
-      js = js.replace(/https:\/\/static\.epidemicsound\.com/g, `${currentHost}/epidemicsound/static`);
-      js = js.replace(/https:\/\/cdn\.epidemicsound\.com/g, `${currentHost}/epidemicsound/cdn`);
-      js = js.replace(/https:\/\/images\.epidemicsound\.com/g, `${currentHost}/epidemicsound/images`);
-      
-      return res.status(response.status).type(contentType).send(js);
-    }
-    
-    // Handle CSS - rewrite URLs
-    if (contentType.includes('css')) {
-      let css = response.data.toString('utf-8');
-      
-      css = css.replace(/url\(\/(?!epidemicsound)/g, 'url(/epidemicsound/');
-      css = css.replace(/https:\/\/static\.epidemicsound\.com/g, `${currentHost}/epidemicsound/static`);
-      css = css.replace(/https:\/\/cdn\.epidemicsound\.com/g, `${currentHost}/epidemicsound/cdn`);
-      
-      return res.status(response.status).type(contentType).send(css);
-    }
-    
-    // For other content (images, fonts, etc.), send as-is
+    // For non-HTML, send as-is
     return res.status(response.status).send(response.data);
+    
   } catch (error) {
     console.error('❌ Error proxying Epidemic Sound:', error.message);
     return res.status(500).json({ 
@@ -293,16 +209,12 @@ export async function proxyEpidemicsoundWithAxios(req, res) {
   }
 }
 
-/**
- * Proxy Epidemic Sound static assets
- */
+// Keep all the other proxy functions exactly as they are
 export async function proxyEpidemicsoundStatic(req, res) {
   try {
     const assetPath = req.path.replace('/static', '');
     const targetUrl = `https://static.epidemicsound.com${assetPath}`;
     
-    console.log('🎨 Proxying Epidemic Sound static asset:', targetUrl);
-    
     const response = await axios.get(targetUrl, {
       responseType: 'arraybuffer',
       headers: {
@@ -313,7 +225,6 @@ export async function proxyEpidemicsoundStatic(req, res) {
       validateStatus: () => true
     });
     
-    // Set CORS headers
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Cache-Control', 'public, max-age=31536000');
     
@@ -323,21 +234,16 @@ export async function proxyEpidemicsoundStatic(req, res) {
     
     return res.status(response.status).send(response.data);
   } catch (error) {
-    console.error('❌ Error proxying Epidemic Sound static:', error.message);
-    return res.status(500).json({ error: 'Failed to proxy static asset' });
+    console.error('❌ Error proxying static:', error.message);
+    return res.status(500).send('');
   }
 }
 
-/**
- * Proxy Epidemic Sound CDN assets
- */
 export async function proxyEpidemicsoundCDN(req, res) {
   try {
     const assetPath = req.path.replace('/cdn', '');
     const targetUrl = `https://cdn.epidemicsound.com${assetPath}`;
     
-    console.log('🎨 Proxying Epidemic Sound CDN asset:', targetUrl);
-    
     const response = await axios.get(targetUrl, {
       responseType: 'arraybuffer',
       headers: {
@@ -348,7 +254,6 @@ export async function proxyEpidemicsoundCDN(req, res) {
       validateStatus: () => true
     });
     
-    // Set CORS headers
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Cache-Control', 'public, max-age=31536000');
     
@@ -358,21 +263,16 @@ export async function proxyEpidemicsoundCDN(req, res) {
     
     return res.status(response.status).send(response.data);
   } catch (error) {
-    console.error('❌ Error proxying Epidemic Sound CDN:', error.message);
-    return res.status(500).json({ error: 'Failed to proxy CDN asset' });
+    console.error('❌ Error proxying CDN:', error.message);
+    return res.status(500).send('');
   }
 }
 
-/**
- * Proxy Epidemic Sound assets
- */
 export async function proxyEpidemicsoundAssets(req, res) {
   try {
     const assetPath = req.path.replace('/assets', '');
     const targetUrl = `https://assets.epidemicsound.com${assetPath}`;
     
-    console.log('🎨 Proxying Epidemic Sound assets:', targetUrl);
-    
     const response = await axios.get(targetUrl, {
       responseType: 'arraybuffer',
       headers: {
@@ -383,7 +283,6 @@ export async function proxyEpidemicsoundAssets(req, res) {
       validateStatus: () => true
     });
     
-    // Set CORS headers
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Cache-Control', 'public, max-age=31536000');
     
@@ -393,17 +292,13 @@ export async function proxyEpidemicsoundAssets(req, res) {
     
     return res.status(response.status).send(response.data);
   } catch (error) {
-    console.error('❌ Error proxying Epidemic Sound assets:', error.message);
-    return res.status(500).json({ error: 'Failed to proxy asset' });
+    console.error('❌ Error proxying assets:', error.message);
+    return res.status(500).send('');
   }
 }
 
-/**
- * Proxy Epidemic Sound images
- */
 export async function proxyEpidemicsoundImages(req, res) {
   try {
-    // Get user cookies for image requests
     const userData = await decryptUserCookies(req);
     
     if (userData.redirect) {
@@ -414,38 +309,19 @@ export async function proxyEpidemicsoundImages(req, res) {
     const apiData = await getDataFromApiWithoutVerify(prefix);
     const accountsArray = apiData.access_configuration_preferences[0].accounts;
     
-    if (!accountsArray || accountsArray.length === 0) {
-      return res.status(500).json({ error: 'No accounts available' });
-    }
-
     const currentIndex = getCurrentRotationIndex(accountsArray.length);
     let cookiesArray = accountsArray[currentIndex];
     
-    // Handle both string and array formats
     if (typeof cookiesArray === 'string') {
-      try {
-        cookiesArray = JSON.parse(cookiesArray);
-      } catch (e) {
-        console.error('❌ Failed to parse cookie string:', e.message);
-        return res.status(500).json({ error: 'Invalid cookie format' });
-      }
+      cookiesArray = JSON.parse(cookiesArray);
     }
     
-    // Convert cookie objects to cookie string
-    let cookieString;
-    if (Array.isArray(cookiesArray)) {
-      cookieString = cookiesArray
-        .map(cookie => `${cookie.name}=${cookie.value}`)
-        .join('; ');
-    } else {
-      console.error('❌ Invalid cookie format for images');
-      return res.status(500).json({ error: 'Invalid cookie format' });
-    }
+    const cookieString = cookiesArray
+      .map(cookie => `${cookie.name}=${cookie.value}`)
+      .join('; ');
 
     const imagePath = req.path.replace('/images', '');
     const targetUrl = `https://images.epidemicsound.com${imagePath}`;
-    
-    console.log('🖼️  Proxying Epidemic Sound image:', targetUrl);
     
     const response = await axios.get(targetUrl, {
       responseType: 'arraybuffer',
@@ -459,7 +335,6 @@ export async function proxyEpidemicsoundImages(req, res) {
       timeout: 10000
     });
     
-    // Set CORS headers
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Cache-Control', 'public, max-age=31536000');
     
@@ -469,17 +344,13 @@ export async function proxyEpidemicsoundImages(req, res) {
     
     return res.status(response.status).send(response.data);
   } catch (error) {
-    console.error('❌ Error proxying Epidemic Sound image:', error.message);
-    return res.status(500).send('Image proxy error');
+    console.error('❌ Error proxying image:', error.message);
+    return res.status(500).send('');
   }
 }
 
-/**
- * Proxy Epidemic Sound media (audio files)
- */
 export async function proxyEpidemicsoundMedia(req, res) {
   try {
-    // Get user cookies for media requests
     const userData = await decryptUserCookies(req);
     
     if (userData.redirect) {
@@ -490,38 +361,19 @@ export async function proxyEpidemicsoundMedia(req, res) {
     const apiData = await getDataFromApiWithoutVerify(prefix);
     const accountsArray = apiData.access_configuration_preferences[0].accounts;
     
-    if (!accountsArray || accountsArray.length === 0) {
-      return res.status(500).json({ error: 'No accounts available' });
-    }
-
     const currentIndex = getCurrentRotationIndex(accountsArray.length);
     let cookiesArray = accountsArray[currentIndex];
     
-    // Handle both string and array formats
     if (typeof cookiesArray === 'string') {
-      try {
-        cookiesArray = JSON.parse(cookiesArray);
-      } catch (e) {
-        console.error('❌ Failed to parse cookie string:', e.message);
-        return res.status(500).json({ error: 'Invalid cookie format' });
-      }
+      cookiesArray = JSON.parse(cookiesArray);
     }
     
-    // Convert cookie objects to cookie string
-    let cookieString;
-    if (Array.isArray(cookiesArray)) {
-      cookieString = cookiesArray
-        .map(cookie => `${cookie.name}=${cookie.value}`)
-        .join('; ');
-    } else {
-      console.error('❌ Invalid cookie format for media');
-      return res.status(500).json({ error: 'Invalid cookie format' });
-    }
+    const cookieString = cookiesArray
+      .map(cookie => `${cookie.name}=${cookie.value}`)
+      .join('; ');
 
     const mediaPath = req.path.replace('/media', '');
     const targetUrl = `https://media.epidemicsound.com${mediaPath}`;
-    
-    console.log('🎵 Proxying Epidemic Sound media:', targetUrl);
     
     const response = await axios.get(targetUrl, {
       responseType: 'arraybuffer',
@@ -532,10 +384,9 @@ export async function proxyEpidemicsoundMedia(req, res) {
         'Cookie': cookieString
       },
       validateStatus: () => true,
-      timeout: 30000 // Longer timeout for audio files
+      timeout: 30000
     });
     
-    // Set CORS headers
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Cache-Control', 'public, max-age=31536000');
     
@@ -545,7 +396,7 @@ export async function proxyEpidemicsoundMedia(req, res) {
     
     return res.status(response.status).send(response.data);
   } catch (error) {
-    console.error('❌ Error proxying Epidemic Sound media:', error.message);
-    return res.status(500).send('Media proxy error');
+    console.error('❌ Error proxying media:', error.message);
+    return res.status(500).send('');
   }
 }

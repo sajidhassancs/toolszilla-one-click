@@ -117,8 +117,17 @@ router.use('/fonts', (req, res) => {
 router.use((req, res) => {
   console.log('🎨 [FREEPIK] Catch-all handler triggered');
   console.log('   Method:', req.method);
+  console.log('   Path:', req.path);
   console.log('   URL:', req.url);
   console.log('   Original URL:', req.originalUrl);
+  
+  // ✅ Add this check to see what's actually being requested
+  if (req.path === '' || req.path === '/') {
+    console.log('   → Root path, loading homepage');
+  } else {
+    console.log('   → Internal page:', req.path);
+  }
+  
   return proxyFreepikWithPuppeteer(req, res);
 });
 

@@ -200,26 +200,33 @@ export async function handleProxyRequest(req, res, productConfig) {
       productConfig.replaceRules || []
     );
 
-    // ✅ REWRITE ASSET URLs FOR PRODUCTS WITH assetDomains CONFIG
-    if (productConfig.assetDomains && contentType.includes('text/html')) {
-      console.log('🔧 Rewriting asset URLs for', productConfig.name);
-      let htmlContent = processedData.toString('utf-8');
-      
-      for (const assetDomain of productConfig.assetDomains) {
-        const fromDomain = assetDomain.from;
-        const toPath = assetDomain.to;
-        
-       
-        htmlContent = htmlContent.replace(
-          new RegExp(`https://${fromDomain.replace(/\./g, '\\.')}`, 'g'),
-          `http://${req.get('host')}${productPrefix}${toPath}`
-        );
-        
-        console.log(`   ✅ Rewritten: ${fromDomain} → ${productPrefix}${toPath}`);
-      }
-      
-      return res.status(response.status).type(contentType).send(htmlContent);
+  // ✅ REWRITE ASSET URLs FOR PRODUCTS WITH assetDomains CONFIG
+if (productConfig.assetDomains && contentType.includes('text/html')) {
+  console.log('🔧 Rewriting asset URLs for', productConfig.name);
+  let htmlContent = processedData.toString('utf-8');
+  
+  for (const assetDomain of productConfig.assetDomains) {
+    const fromDomain = assetDomain.from;
+    const toPath = assetDomain.to;
+    
+    // ✅ SKIP IMAGE DOMAINS - let them load directly from CDN
+    if (fromDomain.includes('elements-resized') || 
+        fromDomain.includes('elements-assets') || 
+        fromDomain.includes('envatousercontent')) {
+      console.log(`   ⏭️  Skipping image domain: ${fromDomain}`);
+      continue;
     }
+   
+    htmlContent = htmlContent.replace(
+      new RegExp(`https://${fromDomain.replace(/\./g, '\\.')}`, 'g'),
+      `http://${req.get('host')}${productPrefix}${toPath}`
+    );
+    
+    console.log(`   ✅ Rewritten: ${fromDomain} → ${productPrefix}${toPath}`);
+  }
+  
+  return res.status(response.status).type(contentType).send(htmlContent);
+}
 
     console.log('✅ Sending processed response');
     return res.status(response.status).type(contentType).send(processedData);

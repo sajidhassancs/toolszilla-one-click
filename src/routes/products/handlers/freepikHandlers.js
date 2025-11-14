@@ -9,6 +9,7 @@ import { decryptUserCookies } from '../../../services/cookieService.js';
 import { getDataFromApiWithoutVerify } from '../../../services/apiService.js';
 import { USER_AGENT } from '../../../utils/constants.js';
 import { proxyWithPuppeteer } from './puppeteerProxy.js';
+import { getBrowser } from '../../../services/browserService.js';
 
 /**
  * Main Freepik proxy handler using Puppeteer
@@ -320,10 +321,13 @@ export async function proxyFreepikFPS(req, res) {
 }
 
 
+
 /**
- * Proxy Freepik API calls
+ * Proxy Freepik API calls - USING PUPPETEER to bypass CloudFlare
  */
 export async function proxyFreepikAPI(req, res) {
+  let browser = null;
+  
   try {
     const userData = await decryptUserCookies(req);
     
@@ -344,12 +348,7 @@ export async function proxyFreepikAPI(req, res) {
       }
     }
     
-    let cookieString;
-    if (Array.isArray(cookiesArray)) {
-      cookieString = cookiesArray
-        .map(cookie => `${cookie.name}=${cookie.value}`)
-        .join('; ');
-    } else {
+    if (!Array.isArray(cookiesArray) || cookiesArray.length === 0) {
       return res.status(500).json({ error: 'Invalid cookie format' });
     }
 
@@ -357,38 +356,74 @@ export async function proxyFreepikAPI(req, res) {
     const apiPath = req.originalUrl.replace('/freepik', '');
     const targetUrl = `https://www.freepik.com${apiPath}`;
     
-    console.log('🔌 Proxying Freepik API:', targetUrl);
+    console.log('🔌 Proxying Freepik API with Puppeteer:', targetUrl);
     
-    const response = await axios({
-      method: req.method,
-      url: targetUrl,
-      headers: {
-        'User-Agent': USER_AGENT,
-        'Accept': req.headers.accept || 'application/json',
-        'Referer': 'https://www.freepik.com/',
-        'Cookie': cookieString,
-        'Content-Type': req.headers['content-type'] || 'application/json'
-      },
-      data: req.body,
-      validateStatus: () => true,
+    // Use Puppeteer to bypass CloudFlare
+    browser = await getBrowser();
+    const page = await browser.newPage();
+    
+    // Set stealth mode
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+    
+    // Set cookies
+    const puppeteerCookies = cookiesArray.map(cookie => ({
+      name: cookie.name,
+      value: cookie.value,
+      domain: cookie.domain || '.freepik.com',
+      path: cookie.path || '/',
+      expires: cookie.expirationDate || -1,
+      httpOnly: cookie.httpOnly || false,
+      secure: cookie.secure || false,
+      sameSite: cookie.sameSite || 'Lax'
+    }));
+    
+    await page.setCookie(...puppeteerCookies);
+    
+    // Fetch API
+    const response = await page.goto(targetUrl, {
+      waitUntil: 'domcontentloaded',
       timeout: 10000
     });
     
-    console.log('✅ API response status:', response.status);
-    
-    res.set('Access-Control-Allow-Origin', '*');
-    
-    if (response.headers['content-type']) {
-      res.set('Content-Type', response.headers['content-type']);
+    if (!response) {
+      await page.close();
+      return res.status(500).json({ error: 'API request failed' });
     }
     
-    return res.status(response.status).send(response.data);
+   const content = await response.text();
+console.log('📦 API Response body:', content.substring(0, 200));
+const contentType = response.headers()['content-type'] || 'application/json';
+
+// ✅ FORWARD COOKIES TO BROWSER
+const responseCookies = await page.cookies();
+if (responseCookies.length > 0) {
+  console.log('🍪 Setting', responseCookies.length, 'cookies in user browser');
+  responseCookies.forEach(cookie => {
+    res.cookie(cookie.name, cookie.value, {
+      domain: '.primewp.net',  // ✅ Change domain to our proxy domain
+      path: cookie.path || '/',
+      httpOnly: false,  // ✅ Allow JavaScript to read it
+      secure: true,
+      sameSite: 'none',
+      maxAge: 3600000
+    });
+  });
+}
+
+await page.close();
+    
+    console.log('✅ API response status:', response.status());
+    
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Content-Type', contentType);
+    
+    return res.status(response.status()).send(content);
+    
   } catch (error) {
     console.error('❌ Error proxying Freepik API:', error.message);
     return res.status(500).json({ error: 'API proxy error' });
   }
 }
-
 /**
  * Proxy Freepik manifest.json (no authentication needed)
  */

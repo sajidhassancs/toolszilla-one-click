@@ -23,13 +23,13 @@ export default {
   
   // Domain replacement rules [find, replace]
   replaceRules: [
-    ['static.freepik.com', 'localhost:8224/freepik/static'],
-    ['cdn.freepik.com', 'localhost:8224/freepik/cdn'],
-    ['cdnb.freepik.com', 'localhost:8224/freepik/cdnb'],
-    ['img.freepik.com', 'localhost:8224/freepik/img'],
-    ['image.freepik.com', 'localhost:8224/freepik/image'],
-    ['assets.freepik.com', 'localhost:8224/freepik/assets'],
-    ['fps.cdnpk.net', 'localhost:8224/freepik/fps']
+    ['static.freepik.com', 'dev-server.primewp.net/freepik/static'],
+    ['cdn.freepik.com', 'dev-server.primewp.net/freepik/cdn'],
+    ['cdnb.freepik.com', 'dev-server.primewp.net/freepik/cdnb'],
+    ['img.freepik.com', 'dev-server.primewp.net/freepik/img'],
+    ['image.freepik.com', 'dev-server.primewp.net/freepik/image'],
+    ['assets.freepik.com', 'dev-server.primewp.net/freepik/assets'],
+    ['fps.cdnpk.net', 'dev-server.primewp.net/freepik/fps']
   ],
   
   // Custom headers for requests

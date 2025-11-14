@@ -96,10 +96,22 @@ router.get('/setup-session', (req, res) => {
 
   console.log('✅ Cookies set successfully');
   
-  const productName = product || 'flaticon';
-  console.log(`🔀 Redirecting to: /${productName}`);
+const productName = product || 'flaticon';
 
+// ✅ Special handling for Epidemic Sound & Envato - redirect to root path
+if (productName === 'epidemicsound') {
+  console.log(`🔀 Redirecting to: /music/featured/ (Epidemic Sound - no prefix)`);
+  return res.redirect('/music/featured/?override_referrer=');
+} else if (productName === 'envato') {
+  console.log(`🔀 Redirecting to: / (Envato homepage - no prefix)`);
+  return res.redirect('/');
+} else if (productName === 'freepik') {
+  console.log(`🔀 Redirecting to: / (Freepik homepage - no prefix)`);
+  return res.redirect('/');
+} else {
+  console.log(`🔀 Redirecting to: /${productName}`);
   return res.redirect(`/${productName}`);
+}
 });
 
 // Health check
@@ -480,6 +492,62 @@ router.use('/media', (req, res) => {
   return handleMediaProxy(req, res, flaticonConfig, 'media.flaticon.com');
 });
 
+// ✅ HANDLE ROOT-LEVEL API ROUTES (BEFORE AUTO-ROUTER!)
+router.use((req, res, next) => {
+  const productCookie = req.cookies.product || '';
+  
+  // Only handle these specific root paths (not if they're already prefixed)
+  const rootApiPaths = ['/session/', '/json/', '/api/', '/a/', '/trackshop/', '/data-api/', '/elements-api/'];
+  const startsWithRootApi = rootApiPaths.some(path => req.url === path.slice(0, -1) || req.url.startsWith(path));
+  
+  // Skip if URL already has product prefix
+  if (req.url.startsWith('/epidemicsound/') || req.url.startsWith('/flaticon/') || 
+      req.url.startsWith('/envato/') || req.url.startsWith('/vecteezy/')) {
+    return next();
+  }
+  
+ // Only prefix if this is a root API path
+// Only prefix if this is a root API path
+if (startsWithRootApi) {
+  if (productCookie === 'epidemicsound') {
+    console.log(`🔀 [ROOT API] ${req.originalUrl} → /epidemicsound${req.originalUrl}`);
+    req.url = `/epidemicsound${req.originalUrl}`;
+  } else if (productCookie === 'envato') {
+    console.log(`🔀 [ROOT API] ${req.originalUrl} → /envato${req.originalUrl}`);
+    req.url = `/envato${req.originalUrl}`;
+  } else if (productCookie === 'freepik') {
+    console.log(`🔀 [ROOT API] ${req.originalUrl} → /freepik${req.originalUrl}`);
+    req.url = `/freepik${req.originalUrl}`;
+  }
+}
+  
+  return next();
+});
+
+// Add this BEFORE the auto-router, after /setup-session
+router.get('/manifest.webmanifest', (req, res) => {
+  const productCookie = req.cookies.product || '';
+  
+  if (productCookie === 'envato') {
+    return res.json({
+      name: "Envato Elements",
+      short_name: "Elements",
+      start_url: "/envato",
+      display: "standalone",
+      theme_color: "#82b541",
+      background_color: "#ffffff",
+      icons: []
+    });
+  }
+  
+  return res.json({
+    name: "ToolsZilla",
+    short_name: "ToolsZilla",
+    start_url: "/",
+    display: "standalone",
+    icons: []
+  });
+});
  
 // ============================================
 // ✅ FIXED AUTO-ROUTER - NO MORE DOUBLE PREFIXING!
@@ -515,16 +583,30 @@ router.use((req, res, next) => {
 
   const referer = req.headers.referer || '';
   const productCookie = req.cookies.product || '';
-
+  const hasProductInReferer = productPrefixes.some(prefix => referer.includes(prefix));
+  
+ if (hasProductInReferer && productCookie !== 'freepik') {
+  // Referer already has product context - don't add prefix (except for Freepik)
+  return next();
+}
   // Now add prefix based on cookie/referer (only if URL doesn't have it yet)
-  if (referer.includes('/epidemicsound') || productCookie === 'epidemicsound') {
-    console.log(`🔀 [AUTO-ROUTER] ${req.url} → /epidemicsound${req.url}`);
-    req.url = `/epidemicsound${req.url}`;
-  }
-  else if (referer.includes('/vecteezy') || productCookie === 'vecteezy') {
-    console.log(`🔀 [AUTO-ROUTER] ${req.url} → /vecteezy${req.url}`);
-    req.url = `/vecteezy${req.url}`;
-  }
+// Now add prefix based on cookie/referer (only if URL doesn't have it yet)
+if (referer.includes('/epidemicsound') || productCookie === 'epidemicsound') {
+  console.log(`🔀 [AUTO-ROUTER] ${req.url} → /epidemicsound${req.url}`);
+  req.url = `/epidemicsound${req.url}`;
+}
+else if (referer.includes('/envato') || productCookie === 'envato') {
+  console.log(`🔀 [AUTO-ROUTER] ${req.url} → /envato${req.url}`);
+  req.url = `/envato${req.url}`;
+}
+else if (referer.includes('/freepik') || productCookie === 'freepik') {
+  console.log(`🔀 [AUTO-ROUTER] ${req.url} → /freepik${req.url}`);
+  req.url = `/freepik${req.url}`;
+}
+else if (referer.includes('/vecteezy') || productCookie === 'vecteezy') {
+  console.log(`🔀 [AUTO-ROUTER] ${req.url} → /vecteezy${req.url}`);
+  req.url = `/vecteezy${req.url}`;
+}
   else if (referer.includes('/stealthwriter') || productCookie === 'stealthwriter') {
     console.log(`🔀 [AUTO-ROUTER] ${req.url} → /stealthwriter${req.url}`);
     req.url = `/stealthwriter${req.url}`;
@@ -536,6 +618,8 @@ router.use((req, res, next) => {
   
   next();
 });
+
+
 
 // ============================================
 // PRODUCT ROUTES (MUST BE LAST!)

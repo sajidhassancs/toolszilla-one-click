@@ -44,21 +44,78 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
 
     console.log('🍪 Loaded', cookiesArray.length, 'cookies for Puppeteer');
 
-    // Get clean path (remove product prefix)
+    // ✅ FIX: Use req.url instead of req.originalUrl
+    // req.url is relative to the router and doesn't include the product prefix
     const productPrefix = `/${productConfig.name}`;
-    let requestPath = req.originalUrl;
+    let requestPath = req.url;
     
+    // ✅ Only remove prefix if it somehow still exists (shouldn't happen with req.url)
     if (requestPath.startsWith(productPrefix)) {
       requestPath = requestPath.substring(productPrefix.length);
     }
+    
+    // ✅ Ensure path starts with /
+    if (!requestPath.startsWith('/')) {
+      requestPath = '/' + requestPath;
+    }
 
     // Build target URL
-    const targetUrl = `https://${productConfig.domain}${requestPath || '/'}`;
+    const targetUrl = `https://${productConfig.domain}${requestPath}`;
     console.log('🎯 Target URL:', targetUrl);
 
     // Launch browser
     browser = await getBrowser();
     const page = await browser.newPage();
+
+    // ✅ STEALTH MODE - Only for Freepik (bypass CloudFlare)
+    if (productConfig.name === 'freepik') {
+      console.log('🥷 Enabling stealth mode for Freepik...');
+      
+      await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+      
+      await page.setViewport({
+        width: 1920,
+        height: 1080,
+        deviceScaleFactor: 1
+      });
+      
+      await page.evaluateOnNewDocument(() => {
+        Object.defineProperty(navigator, 'webdriver', {
+          get: () => false,
+        });
+        
+        Object.defineProperty(navigator, 'plugins', {
+          get: () => [1, 2, 3, 4, 5],
+        });
+        
+        Object.defineProperty(navigator, 'languages', {
+          get: () => ['en-US', 'en'],
+        });
+        
+        window.chrome = {
+          runtime: {},
+        };
+        
+        const originalQuery = window.navigator.permissions.query;
+        window.navigator.permissions.query = (parameters) => (
+          parameters.name === 'notifications' ?
+            Promise.resolve({ state: Notification.permission }) :
+            originalQuery(parameters)
+        );
+      });
+      
+      await page.setExtraHTTPHeaders({
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Upgrade-Insecure-Requests': '1',
+        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-User': '?1',
+        'Sec-Fetch-Dest': 'document'
+      });
+      
+      console.log('✅ Stealth mode enabled');
+    }
 
     // ✅ CRITICAL FIX: ENABLE INTERCEPTION FIRST!
     await page.setRequestInterception(true);
@@ -80,7 +137,7 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
         'clarity.ms',
         'hotjar.com',
         'hotjar.io',
-        'metrics.hotjar.io',  // ✅ FIX YOUR ISSUE!
+        'metrics.hotjar.io',
         'vars.hotjar.com',
         'script.hotjar.com',
         'static.hotjar.com',
@@ -113,7 +170,7 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
       return request.continue();
     });
 
-    // Set cookies
+    // Prepare cookies
     const puppeteerCookies = cookiesArray.map(cookie => ({
       name: cookie.name,
       value: cookie.value,
@@ -125,9 +182,6 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
       sameSite: cookie.sameSite || 'Lax'
     }));
 
-    await page.setCookie(...puppeteerCookies);
-    console.log('✅ Set', puppeteerCookies.length, 'cookies in browser');
-
     // ✅ IMPROVED: Inject script to intercept fetch/XHR BEFORE navigation
     await page.evaluateOnNewDocument((productPrefix) => {
       console.log('🔧 [INTERCEPTOR] Product prefix:', productPrefix);
@@ -137,8 +191,14 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
       window.fetch = function(...args) {
         let url = args[0];
         
-        // If URL starts with /, add product prefix
+        // Only rewrite if URL starts with / and is going to OUR proxy, not Freepik's server
         if (typeof url === 'string' && url.startsWith('/') && !url.startsWith(productPrefix)) {
+          // Check if this is already pointing to Freepik's domain (don't rewrite)
+          if (url.includes('freepik.com') || url.includes('cdnpk.net')) {
+            console.log('[FETCH] Skipping rewrite for Freepik URL:', url);
+            return originalFetch.apply(this, args);
+          }
+          
           const newUrl = productPrefix + url;
           console.log('[FETCH INTERCEPTED]', url, '→', newUrl);
           args[0] = newUrl;
@@ -173,7 +233,7 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
       }
     }, productPrefix);
 
-    // Navigate to page with extensive debugging
+    // Navigate to page FIRST (without cookies)
     console.log('🚀 Attempting to load page...');
 
     // Log all network requests
@@ -189,7 +249,22 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
         waitUntil: 'domcontentloaded',
         timeout: 30000
       });
-      console.log('✅ Page loaded successfully');
+      console.log('✅ Page loaded');
+      
+      // ✅ NOW SET COOKIES AFTER PAGE LOADS
+      console.log('🍪 Setting cookies after page load...');
+      await page.setCookie(...puppeteerCookies);
+      console.log('✅ Set', puppeteerCookies.length, 'cookies in browser');
+      
+      // Verify cookies were set
+      const actualCookies = await page.cookies();
+      console.log('🔍 Cookies in browser:', actualCookies.length);
+      
+      // Reload page to apply cookies
+      console.log('🔄 Reloading page with cookies...');
+      await page.reload({ waitUntil: 'networkidle2', timeout: 30000 });
+      console.log('✅ Page reloaded successfully with cookies');
+      
     } catch (error) {
       console.error('❌ Page load failed:', error.message);
       
@@ -210,13 +285,49 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
     // Get page content
     let html = await page.content();
 
+    // ✅ INJECT COOKIES INTO USER'S BROWSER
+    console.log('🍪 Injecting cookies into HTML...');
+    const cookieScript = `
+<script>
+(function() {
+  console.log('🍪 Setting cookies in browser...');
+  ${puppeteerCookies.map(cookie => 
+    `document.cookie = '${cookie.name}=${cookie.value}; path=${cookie.path}; domain=${cookie.domain}; ${cookie.secure ? 'secure;' : ''} samesite=${cookie.sameSite}';`
+  ).join('\n  ')}
+  console.log('✅ Cookies set!');
+})();
+</script>`;
+
+    // Inject before </head>
+    if (html.includes('</head>')) {
+      html = html.replace('</head>', `${cookieScript}</head>`);
+      console.log('   ✅ Injected cookie script');
+    } else {
+      console.log('   ⚠️ No </head> tag found');
+    }
+
+    // ✅ ADD THIS - Check if page shows logged in content
+    if (html.includes('Sign in') || html.includes('Log in')) {
+      console.log('⚠️  HTML contains sign in button');
+    } else {
+      console.log('✅ HTML does NOT contain sign in button');
+    }
+
+    // Check for user profile indicators
+    if (html.includes('logout') || html.includes('profile') || html.includes('account')) {
+      console.log('✅ HTML contains logout/profile indicators - likely logged in');
+    }
+
     // ✅ IMPROVED URL REWRITING
     console.log('🔧 Rewriting URLs in HTML...');
+    
+    // ✅ DETECT PROTOCOL - Use https for production, http for localhost
+    const isLocalhost = req.get('host').includes('localhost') || req.get('host').includes('127.0.0.1');
+    const protocol = isLocalhost ? 'http' : 'https';
+    const localProxyBase = `${protocol}://${req.get('host')}${productPrefix}`;
 
-    const localProxyBase = `http://${req.get('host')}${productPrefix}`;
-
-    // 🔥 CONDITIONAL BASE TAG - Skip for Epidemic Sound (prevents double prefixing)
-    if (productConfig.name !== 'epidemicsound') {
+    // 🔥 CONDITIONAL BASE TAG - Skip for Epidemic Sound & Freepik (prevents issues)
+    if (productConfig.name !== 'epidemicsound' && productConfig.name !== 'freepik') {
       const baseTag = `<base href="${localProxyBase}/">`;
       if (html.includes('<head>')) {
         html = html.replace('<head>', `<head>${baseTag}`);
@@ -225,7 +336,7 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
       }
       console.log('   ✅ Injected base tag:', baseTag);
     } else {
-      console.log('   ⚠️ Skipped base tag for Epidemic Sound (prevents double prefixing)');
+      console.log('   ⚠️ Skipped base tag for', productConfig.name, '(prevents double prefixing)');
     }
 
     // 1. Replace absolute domain URLs
@@ -256,8 +367,15 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
     html = html.replace(/url\("\/(?!\/)/g, `url("${productPrefix}/`);
     html = html.replace(/url\('\/(?!\/)/g, `url('${productPrefix}/`);
 
-    // 4. Fix localhost HTTPS references
-    html = html.replace(/https:\/\/localhost:8224/g, 'http://localhost:8224');
+    // 4. Fix localhost/production HTTPS references
+    const currentHost = req.get('host');
+    if (isLocalhost) {
+      html = html.replace(/https:\/\/localhost:8224/g, 'http://localhost:8224');
+    } else {
+      // Fix any remaining localhost references to production
+      html = html.replace(/http:\/\/localhost:8224/g, `https://${currentHost}`);
+      html = html.replace(/https:\/\/localhost:8224/g, `https://${currentHost}`);
+    }
 
     // 5. Fix double slashes
     html = html.replace(new RegExp(`${productPrefix}${productPrefix}`, 'g'), productPrefix);
@@ -321,12 +439,18 @@ export async function proxyAssetWithPuppeteer(req, res, productConfig, assetDoma
       return res.status(403).send('No cookies configured');
     }
 
-    // Get clean asset path
+    // ✅ FIX: Use req.url instead of req.originalUrl
     const productPrefix = `/${productConfig.name}`;
-    let assetPath = req.originalUrl;
+    let assetPath = req.url;
     
+    // ✅ Only remove prefix if it somehow still exists
     if (assetPath.startsWith(productPrefix)) {
       assetPath = assetPath.substring(productPrefix.length);
+    }
+    
+    // ✅ Ensure path starts with /
+    if (!assetPath.startsWith('/')) {
+      assetPath = '/' + assetPath;
     }
 
     // Build asset URL
@@ -401,7 +525,10 @@ export async function proxyAssetWithPuppeteer(req, res, productConfig, assetDoma
     if (contentType.includes('css') || contentType.includes('javascript')) {
       let content = buffer.toString('utf-8');
       
-      const localProxyBase = `http://${req.get('host')}${productPrefix}`;
+      // ✅ DETECT PROTOCOL
+      const isLocalhost = req.get('host').includes('localhost') || req.get('host').includes('127.0.0.1');
+      const protocol = isLocalhost ? 'http' : 'https';
+      const localProxyBase = `${protocol}://${req.get('host')}${productPrefix}`;
       
       // Replace domain references
       content = content.replace(
@@ -418,8 +545,14 @@ export async function proxyAssetWithPuppeteer(req, res, productConfig, assetDoma
       content = content.replace(/url\("\/(?!\/)/g, `url("${productPrefix}/`);
       content = content.replace(/url\('\/(?!\/)/g, `url('${productPrefix}/`);
       
-      // Fix localhost HTTPS
-      content = content.replace(/https:\/\/localhost:8224/g, 'http://localhost:8224');
+      // Fix localhost/production references
+      if (isLocalhost) {
+        content = content.replace(/https:\/\/localhost:8224/g, 'http://localhost:8224');
+      } else {
+        const currentHost = req.get('host');
+        content = content.replace(/http:\/\/localhost:8224/g, `https://${currentHost}`);
+        content = content.replace(/https:\/\/localhost:8224/g, `https://${currentHost}`);
+      }
 
       res.setHeader('Content-Type', contentType);
       return res.send(content);

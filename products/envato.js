@@ -22,12 +22,14 @@ export default {
   useExternalProxy: true,  // ✅ Envato needs proxies
   
   // ✅ NEW: Asset domains to rewrite in HTML
-  assetDomains: [
-    { from: 'assets.elements.envato.com', to: '/assets' },
-    { from: 'elements-assets.envato.com', to: '/images' },
-    { from: 'elements-resized.envatousercontent.com', to: '/images' },
-    { from: 'account.envato.com', to: '/account' }
-  ],
+// ✅ NEW: Asset domains to rewrite in HTML
+assetDomains: [
+  { from: 'elements.envato.com', to: '' },  // ✅ Main domain - rewrite to root (no prefix)
+  { from: 'assets.elements.envato.com', to: '/assets' },
+  { from: 'elements-assets.envato.com', to: '/images' },
+  { from: 'elements-resized.envatousercontent.com', to: '/images' },
+  { from: 'account.envato.com', to: '/account' }
+],
   
   // Domain replacement rules [find, replace] - DEPRECATED (use assetDomains instead)
   replaceRules: [],

@@ -71,22 +71,76 @@ router.get('/infrastructure_availability.json', (req, res) => {
   });
 });
 
-// Lazy API
-router.use('/lazy', (req, res) => proxyEnvatoApi(req, res, 'data-api'));
-
-// Manifest
+// Lazy API - keep the /lazy prefix in the URL
+router.use('/lazy', async (req, res) => {
+  try {
+    const userData = await decryptUserCookies(req);
+    if (userData.redirect) return res.redirect(userData.redirect);
+    
+    const prefix = userData.prefix;
+    const apiData = await getDataFromApiWithoutVerify(prefix);
+    const accountsArray = apiData.access_configuration_preferences[0].accounts;
+    const currentIndex = getCurrentRotationIndex(accountsArray.length);
+    let cookiesArray = accountsArray[currentIndex];
+    
+    if (typeof cookiesArray === 'string') {
+      cookiesArray = JSON.parse(cookiesArray);
+    }
+    
+    const cookieString = cookiesArray.map(c => `${c.name}=${c.value}`).join('; ');
+    
+    // Keep /data-api/lazy in the path
+    const targetUrl = `https://elements.envato.com/data-api${req.url}`;
+    
+    console.log('🎯 Lazy API:', targetUrl);
+    
+    const response = await axios({
+      method: req.method,
+      url: targetUrl,
+      headers: {
+        'accept': 'application/json',
+        'user-agent': USER_AGENT,
+        'Cookie': cookieString
+      },
+      validateStatus: () => true
+    });
+    
+    if (response.status === 404) {
+      return res.status(200).json({ data: [] });
+    }
+    
+    res.set('Access-Control-Allow-Origin', '*');
+    return res.status(response.status).send(response.data);
+  } catch (error) {
+    console.error('❌ Lazy API error:', error.message);
+    return res.status(200).json({ data: [] });
+  }
+});
+// Add this BEFORE the auto-router section
 router.get('/manifest.webmanifest', (req, res) => {
+  const productCookie = req.cookies.product || '';
+  
+  if (productCookie === 'envato') {
+    return res.json({
+      name: "Envato Elements",
+      short_name: "Elements",
+      start_url: "/envato",
+      display: "standalone",
+      theme_color: "#82b541",
+      background_color: "#ffffff",
+      icons: []
+    });
+  }
+  
+  // Default
   return res.json({
-    name: "Envato Elements",
-    short_name: "Elements", 
-    start_url: "/envato",
+    name: "ToolsZilla",
+    short_name: "ToolsZilla",
+    start_url: "/",
     display: "standalone",
-    theme_color: "#82b541",
-    background_color: "#ffffff",
     icons: []
   });
 });
-
 router.get('/favicon.svg', (req, res) => {
   return handleProxyRequest(req, res, envatoConfig);
 });
