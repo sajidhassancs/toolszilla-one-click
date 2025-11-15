@@ -35,7 +35,7 @@ router.use((req, res, next) => {
 router.get('/setup-session', (req, res) => {
   console.log('🔧 Setting up session');
   console.log('📥 Query params:', req.query);
-  
+
   const {
     auth_token,
     prefix,
@@ -73,7 +73,7 @@ router.get('/setup-session', (req, res) => {
 
   // ✅ DETECT LOCALHOST vs PRODUCTION
   const isLocalhost = req.get('host').includes('localhost') || req.get('host').includes('127.0.0.1');
-  
+
   const cookieOptions = {
     httpOnly: true,
     secure: !isLocalhost,
@@ -89,34 +89,50 @@ router.get('/setup-session', (req, res) => {
   res.cookie('product', product, cookieOptions);
   res.cookie('site', site, cookieOptions);
   res.cookie('ttl', ttl || Math.floor(Date.now() / 1000).toString(), cookieOptions);
-  
+
   if (user_email) {
     res.cookie('user_email', user_email, cookieOptions);
   }
 
   console.log('✅ Cookies set successfully');
-  
-const productName = product || 'flaticon';
 
-// ✅ Special handling for Epidemic Sound & Envato - redirect to root path
-if (productName === 'epidemicsound') {
-  console.log(`🔀 Redirecting to: /music/featured/ (Epidemic Sound - no prefix)`);
-  return res.redirect('/music/featured/?override_referrer=');
-} else if (productName === 'envato') {
-  console.log(`🔀 Redirecting to: / (Envato homepage - no prefix)`);
-  return res.redirect('/');
-} else if (productName === 'freepik') {
-  console.log(`🔀 Redirecting to: / (Freepik homepage - no prefix)`);
-  return res.redirect('/');
-} else {
-  console.log(`🔀 Redirecting to: /${productName}`);
-  return res.redirect(`/${productName}`);
-}
+  const productName = product || 'flaticon';
+
+  // ✅ Special handling for Epidemic Sound & Envato - redirect to root path
+  if (productName === 'epidemicsound') {
+    console.log(`🔀 Redirecting to: /music/featured/ (Epidemic Sound - no prefix)`);
+    return res.redirect('/music/featured/?override_referrer=');
+  } else if (productName === 'envato') {
+    console.log(`🔀 Redirecting to: / (Envato homepage - no prefix)`);
+    return res.redirect('/');
+  } else if (productName === 'freepik') {
+    console.log(`🔀 Redirecting to: / (Freepik homepage - no prefix)`);
+    return res.redirect('/');  // ← Changed from /freepik/ to just /
+  } else if (productName === 'iconscout') {
+    console.log(`🔀 Redirecting to: / (Iconscout homepage - no prefix)`);
+    return res.redirect('/');  // ✅ ADD THIS - Same as Epidemic Sound
+  } else if (productName === 'stealthwriter') {  // ✅ ADD THIS
+    console.log(`🔀 Redirecting to: /dashboard (StealthWriter - no prefix)`);
+    return res.redirect('/dashboard');
+  } else {
+    console.log(`🔀 Redirecting to: /${productName}`);
+    return res.redirect(`/${productName}`);
+  }
 });
+router.use((req, res, next) => {
+  const productCookie = req.cookies.product || '';
 
+  // If StealthWriter and this is an API call without prefix
+  if (productCookie === 'stealthwriter' && req.url.startsWith('/api/') && !req.url.startsWith('/stealthwriter/')) {
+    console.log(`🔀 [STEALTHWRITER API] ${req.url} → /stealthwriter${req.url}`);
+    req.url = `/stealthwriter${req.url}`;
+  }
+
+  next();
+});
 // Health check
 router.get('/health', (req, res) => {
-  res.json({ 
+  res.json({
     status: 'ok',
     service: 'ToolsZilla One-Click',
     timestamp: new Date().toISOString()
@@ -128,11 +144,11 @@ router.get('/health', (req, res) => {
 // ============================================
 router.get('/manifest.json', (req, res) => {
   const referer = req.headers.referer || '';
-  
+
   console.log('📱 [MANIFEST] Request');
   console.log('   Referer:', referer);
   console.log('   Cookies:', req.cookies);
-  
+
   // Check if request is from Iconscout
   if (referer.includes('/iconscout') || req.cookies.product === 'iconscout') {
     console.log('   ✅ Returning Iconscout manifest');
@@ -146,7 +162,7 @@ router.get('/manifest.json', (req, res) => {
       icons: []
     });
   }
-  
+
   // Default manifest
   console.log('   ✅ Returning default manifest');
   return res.status(200).json({
@@ -187,11 +203,11 @@ router.get('/limit-reached', (req, res) => {
 router.get(/^\/iconscout\/image\/cdna\/(.*)$/, async (req, res) => {
   const cdnPath = req.params[0];
   const cdnUrl = `https://cdna.iconscout.com/${cdnPath}`;
-  
+
   console.log('\n========== CDNA REQUEST ==========');
   console.log('🎨 [CDNA] Request:', cdnUrl);
   console.log('   📋 File:', cdnPath);
-  
+
   try {
     const returnFallback = (reason) => {
       console.log('   ❌ Fallback:', reason);
@@ -205,18 +221,18 @@ router.get(/^\/iconscout\/image\/cdna\/(.*)$/, async (req, res) => {
     };
 
     let cookieString = '';
-    
+
     try {
       if (req.cookies.auth_token && req.cookies.prefix) {
         const userData = await decryptUserCookiesNoSessionCheck(req);
         if (!userData.redirect) {
           const apiData = await getDataFromApiWithoutVerify(userData.prefix);
           let cookiesArray = apiData.access_configuration_preferences[0].accounts[0];
-          
+
           if (typeof cookiesArray === 'string') {
             cookiesArray = JSON.parse(cookiesArray);
           }
-          
+
           cookieString = cookiesArray.map(c => `${c.name}=${c.value}`).join('; ');
           console.log('   🍪 Got', cookiesArray.length, 'premium cookies');
         } else {
@@ -229,33 +245,33 @@ router.get(/^\/iconscout\/image\/cdna\/(.*)$/, async (req, res) => {
       console.log('   ⚠️ Cookie error:', cookieError.message, '- continuing without auth');
     }
 
-    const acceptHeader = cdnPath.endsWith('.js') ? 'application/javascript, */*' 
+    const acceptHeader = cdnPath.endsWith('.js') ? 'application/javascript, */*'
       : cdnPath.match(/\.(png|jpg|jpeg|gif|webp|svg)$/i) ? 'image/*,*/*'
-      : cdnPath.endsWith('.css') ? 'text/css,*/*'
-      : cdnPath.match(/\.(woff|woff2|ttf|eot)$/i) ? 'font/*,*/*'
-      : '*/*';
+        : cdnPath.endsWith('.css') ? 'text/css,*/*'
+          : cdnPath.match(/\.(woff|woff2|ttf|eot)$/i) ? 'font/*,*/*'
+            : '*/*';
 
     console.log('   🌐 Fetching...');
-    
+
     const headers = {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
       'Accept': acceptHeader,
       'Referer': 'https://iconscout.com/'
     };
-    
+
     if (cookieString) {
       headers['Cookie'] = cookieString;
     }
-    
+
     const response = await axios.get(cdnUrl, {
       headers: headers,
       responseType: 'arraybuffer',
       validateStatus: () => true,
       timeout: 15000
     });
-    
+
     console.log('   📊 Response:', response.status, response.headers['content-type'], response.data.length, 'bytes');
-    
+
     if (response.status === 403 || response.status === 404 || response.data.length === 0) {
       return returnFallback('CDN ' + response.status);
     }
@@ -265,10 +281,10 @@ router.get(/^\/iconscout\/image\/cdna\/(.*)$/, async (req, res) => {
     if (response.headers['content-type']) {
       res.set('Content-Type', response.headers['content-type']);
     }
-    
+
     console.log('   ✅ SUCCESS\n');
     return res.status(response.status).send(response.data);
-    
+
   } catch (error) {
     console.error('   ❌ EXCEPTION:', error.message, '\n');
     if (cdnPath.endsWith('.js')) {
@@ -286,11 +302,11 @@ router.get(/^\/iconscout\/image\/cdn3d\/(.*)$/, async (req, res) => {
   try {
     const cdnPath = req.params[0];
     const cdnUrl = `https://cdn3d.iconscout.com/${cdnPath}`;
-    
+
     console.log('🎨 [CDN3D] Request:', cdnUrl);
-    
+
     let cookieString = '';
-    
+
     try {
       if (req.cookies.auth_token && req.cookies.prefix) {
         const userData = await decryptUserCookiesNoSessionCheck(req);
@@ -298,11 +314,11 @@ router.get(/^\/iconscout\/image\/cdn3d\/(.*)$/, async (req, res) => {
           const prefix = userData.prefix;
           const apiData = await getDataFromApiWithoutVerify(prefix);
           let cookiesArray = apiData.access_configuration_preferences[0].accounts[0];
-          
+
           if (typeof cookiesArray === 'string') {
             cookiesArray = JSON.parse(cookiesArray);
           }
-          
+
           cookieString = cookiesArray.map(cookie => `${cookie.name}=${cookie.value}`).join('; ');
         }
       }
@@ -315,7 +331,7 @@ router.get(/^\/iconscout\/image\/cdn3d\/(.*)$/, async (req, res) => {
       'Accept': 'image/*,*/*',
       'Referer': 'https://iconscout.com/'
     };
-    
+
     if (cookieString) {
       headers['Cookie'] = cookieString;
     }
@@ -326,9 +342,9 @@ router.get(/^\/iconscout\/image\/cdn3d\/(.*)$/, async (req, res) => {
       validateStatus: () => true,
       timeout: 15000
     });
-    
+
     console.log('   ✅ CDN3D Response:', response.status);
-    
+
     if (response.status === 403 || response.status === 404) {
       console.log('   ⚠️ Blocked - returning transparent pixel');
       const transparentPixel = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
@@ -339,11 +355,11 @@ router.get(/^\/iconscout\/image\/cdn3d\/(.*)$/, async (req, res) => {
 
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Cache-Control', 'public, max-age=31536000');
-    
+
     if (response.headers['content-type']) {
       res.set('Content-Type', response.headers['content-type']);
     }
-    
+
     console.log('   ✅ Sending image successfully');
     return res.status(response.status).send(response.data);
   } catch (error) {
@@ -359,11 +375,11 @@ router.get(/^\/iconscout\/image\/cdn\/(.*)$/, async (req, res) => {
   try {
     const cdnPath = req.params[0];
     const cdnUrl = `https://cdn.iconscout.com/${cdnPath}`;
-    
+
     console.log('🎨 [CDN] Request:', cdnUrl);
-    
+
     let cookieString = '';
-    
+
     try {
       if (req.cookies.auth_token && req.cookies.prefix) {
         const userData = await decryptUserCookiesNoSessionCheck(req);
@@ -371,11 +387,11 @@ router.get(/^\/iconscout\/image\/cdn\/(.*)$/, async (req, res) => {
           const prefix = userData.prefix;
           const apiData = await getDataFromApiWithoutVerify(prefix);
           let cookiesArray = apiData.access_configuration_preferences[0].accounts[0];
-          
+
           if (typeof cookiesArray === 'string') {
             cookiesArray = JSON.parse(cookiesArray);
           }
-          
+
           cookieString = cookiesArray.map(cookie => `${cookie.name}=${cookie.value}`).join('; ');
         }
       }
@@ -388,7 +404,7 @@ router.get(/^\/iconscout\/image\/cdn\/(.*)$/, async (req, res) => {
       'Accept': 'image/*,*/*',
       'Referer': 'https://iconscout.com/'
     };
-    
+
     if (cookieString) {
       headers['Cookie'] = cookieString;
     }
@@ -399,9 +415,9 @@ router.get(/^\/iconscout\/image\/cdn\/(.*)$/, async (req, res) => {
       validateStatus: () => true,
       timeout: 15000
     });
-    
+
     console.log('   ✅ CDN Response:', response.status);
-    
+
     if (response.status === 403 || response.status === 404) {
       console.log('   ⚠️ Blocked - returning transparent pixel');
       const transparentPixel = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
@@ -412,11 +428,11 @@ router.get(/^\/iconscout\/image\/cdn\/(.*)$/, async (req, res) => {
 
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Cache-Control', 'public, max-age=31536000');
-    
+
     if (response.headers['content-type']) {
       res.set('Content-Type', response.headers['content-type']);
     }
-    
+
     console.log('   ✅ Sending image successfully');
     return res.status(response.status).send(response.data);
   } catch (error) {
@@ -433,7 +449,7 @@ router.get(/^\/iconscout\/image\/cdn\/(.*)$/, async (req, res) => {
 router.use('/strapi', async (req, res) => {
   try {
     console.log('📡 [STRAPI] Request:', req.originalUrl);
-    
+
     const userData = await decryptUserCookies(req);
     if (userData.redirect) {
       console.log('   ❌ Unauthorized');
@@ -443,16 +459,16 @@ router.use('/strapi', async (req, res) => {
     const prefix = userData.prefix;
     const apiData = await getDataFromApiWithoutVerify(prefix);
     let cookiesArray = apiData.access_configuration_preferences[0].accounts[0];
-    
+
     if (typeof cookiesArray === 'string') {
       cookiesArray = JSON.parse(cookiesArray);
     }
-    
+
     const cookieString = cookiesArray.map(cookie => `${cookie.name}=${cookie.value}`).join('; ');
 
     const targetUrl = `https://iconscout.com${req.originalUrl}`;
     console.log('   Target:', targetUrl);
-    
+
     const response = await axios({
       method: req.method,
       url: targetUrl,
@@ -466,9 +482,9 @@ router.use('/strapi', async (req, res) => {
       validateStatus: () => true,
       timeout: 10000
     });
-    
+
     console.log('   ✅ Strapi Response:', response.status);
-    
+
     res.set('Access-Control-Allow-Origin', '*');
     if (response.headers['content-type']) {
       res.set('Content-Type', response.headers['content-type']);
@@ -493,41 +509,42 @@ router.use('/media', (req, res) => {
 });
 
 // ✅ HANDLE ROOT-LEVEL API ROUTES (BEFORE AUTO-ROUTER!)
+// ✅ HANDLE ROOT-LEVEL API ROUTES (BEFORE AUTO-ROUTER!)
 router.use((req, res, next) => {
   const productCookie = req.cookies.product || '';
-  
+
   // Only handle these specific root paths (not if they're already prefixed)
   const rootApiPaths = ['/session/', '/json/', '/api/', '/a/', '/trackshop/', '/data-api/', '/elements-api/'];
   const startsWithRootApi = rootApiPaths.some(path => req.url === path.slice(0, -1) || req.url.startsWith(path));
-  
+
   // Skip if URL already has product prefix
-  if (req.url.startsWith('/epidemicsound/') || req.url.startsWith('/flaticon/') || 
-      req.url.startsWith('/envato/') || req.url.startsWith('/vecteezy/')) {
+  if (req.url.startsWith('/epidemicsound/') || req.url.startsWith('/flaticon/') ||
+    req.url.startsWith('/envato/') || req.url.startsWith('/vecteezy/') ||
+    req.url.startsWith('/freepik/')) {
     return next();
   }
-  
- // Only prefix if this is a root API path
-// Only prefix if this is a root API path
-if (startsWithRootApi) {
-  if (productCookie === 'epidemicsound') {
-    console.log(`🔀 [ROOT API] ${req.originalUrl} → /epidemicsound${req.originalUrl}`);
-    req.url = `/epidemicsound${req.originalUrl}`;
-  } else if (productCookie === 'envato') {
-    console.log(`🔀 [ROOT API] ${req.originalUrl} → /envato${req.originalUrl}`);
-    req.url = `/envato${req.originalUrl}`;
-  } else if (productCookie === 'freepik') {
-    console.log(`🔀 [ROOT API] ${req.originalUrl} → /freepik${req.originalUrl}`);
-    req.url = `/freepik${req.originalUrl}`;
+
+  // Only prefix if this is a root API path
+  if (startsWithRootApi) {
+    if (productCookie === 'epidemicsound') {
+      console.log(`🔀 [ROOT API] ${req.originalUrl} → /epidemicsound${req.originalUrl}`);
+      req.url = `/epidemicsound${req.originalUrl}`;
+    } else if (productCookie === 'envato') {
+      console.log(`🔀 [ROOT API] ${req.originalUrl} → /envato${req.originalUrl}`);
+      req.url = `/envato${req.originalUrl}`;
+    } else if (productCookie === 'freepik') {
+      console.log(`🔀 [ROOT API] ${req.originalUrl} → /freepik${req.originalUrl}`);
+      req.url = `/freepik${req.originalUrl}`;
+    }
   }
-}
-  
+
   return next();
 });
 
 // Add this BEFORE the auto-router, after /setup-session
 router.get('/manifest.webmanifest', (req, res) => {
   const productCookie = req.cookies.product || '';
-  
+
   if (productCookie === 'envato') {
     return res.json({
       name: "Envato Elements",
@@ -539,7 +556,7 @@ router.get('/manifest.webmanifest', (req, res) => {
       icons: []
     });
   }
-  
+
   return res.json({
     name: "ToolsZilla",
     short_name: "ToolsZilla",
@@ -548,7 +565,7 @@ router.get('/manifest.webmanifest', (req, res) => {
     icons: []
   });
 });
- 
+
 // ============================================
 // ✅ FIXED AUTO-ROUTER - NO MORE DOUBLE PREFIXING!
 // ============================================
@@ -559,7 +576,7 @@ router.use((req, res, next) => {
     '/vecteezy', '/storyblocks', '/epidemicsound', '/turndetect',
     '/freepik', '/pikbest'
   ];
-  
+
   // Check each prefix - if found, skip auto-routing completely
   for (const prefix of productPrefixes) {
     if (req.url.startsWith(prefix)) {
@@ -569,57 +586,79 @@ router.use((req, res, next) => {
   }
 
   // Skip system routes
-  if (req.url.startsWith('/setup-session') || 
-      req.url.startsWith('/health') ||
-      req.url.startsWith('/manifest.json') ||
-      req.url.startsWith('/cdn-cgi') ||
-      req.url.startsWith('/admin') ||
-      req.url.startsWith('/media') ||
-      req.url.startsWith('/strapi') ||
-      req.url.startsWith('/login') ||
-      req.url.startsWith('/logout')) {
+  if (req.url.startsWith('/setup-session') ||
+    req.url.startsWith('/health') ||
+    req.url.startsWith('/manifest.json') ||
+    req.url.startsWith('/cdn-cgi') ||
+    req.url.startsWith('/admin') ||
+    req.url.startsWith('/media') ||
+    req.url.startsWith('/strapi') ||
+    req.url.startsWith('/login') ||
+    req.url.startsWith('/logout')) {
     return next();
   }
 
   const referer = req.headers.referer || '';
   const productCookie = req.cookies.product || '';
   const hasProductInReferer = productPrefixes.some(prefix => referer.includes(prefix));
-  
- if (hasProductInReferer && productCookie !== 'freepik') {
-  // Referer already has product context - don't add prefix (except for Freepik)
-  return next();
-}
+
+  if (hasProductInReferer && productCookie !== 'freepik') {
+    // Referer already has product context - don't add prefix (except for Freepik)
+    return next();
+  }
   // Now add prefix based on cookie/referer (only if URL doesn't have it yet)
-// Now add prefix based on cookie/referer (only if URL doesn't have it yet)
-if (referer.includes('/epidemicsound') || productCookie === 'epidemicsound') {
-  console.log(`🔀 [AUTO-ROUTER] ${req.url} → /epidemicsound${req.url}`);
-  req.url = `/epidemicsound${req.url}`;
-}
-else if (referer.includes('/envato') || productCookie === 'envato') {
-  console.log(`🔀 [AUTO-ROUTER] ${req.url} → /envato${req.url}`);
-  req.url = `/envato${req.url}`;
-}
-else if (referer.includes('/freepik') || productCookie === 'freepik') {
-  console.log(`🔀 [AUTO-ROUTER] ${req.url} → /freepik${req.url}`);
-  req.url = `/freepik${req.url}`;
-}
-else if (referer.includes('/vecteezy') || productCookie === 'vecteezy') {
-  console.log(`🔀 [AUTO-ROUTER] ${req.url} → /vecteezy${req.url}`);
-  req.url = `/vecteezy${req.url}`;
-}
+  // Now add prefix based on cookie/referer (only if URL doesn't have it yet)
+  if (referer.includes('/epidemicsound') || productCookie === 'epidemicsound') {
+    console.log(`🔀 [AUTO-ROUTER] ${req.url} → /epidemicsound${req.url}`);
+    req.url = `/epidemicsound${req.url}`;
+  }
+  else if (referer.includes('/envato') || productCookie === 'envato') {
+    console.log(`🔀 [AUTO-ROUTER] ${req.url} → /envato${req.url}`);
+    req.url = `/envato${req.url}`;
+  }
+  else if (referer.includes('/freepik') || productCookie === 'freepik') {
+    console.log(`🔀 [AUTO-ROUTER] ${req.url} → /freepik${req.url}`);
+    req.url = `/freepik${req.url}`;
+  }
   else if (referer.includes('/stealthwriter') || productCookie === 'stealthwriter') {
     console.log(`🔀 [AUTO-ROUTER] ${req.url} → /stealthwriter${req.url}`);
     req.url = `/stealthwriter${req.url}`;
   }
+  // ✅ ADD ICONSCOUT HERE - JUST LIKE EPIDEMIC SOUND
+  else if (referer.includes('/iconscout') || productCookie === 'iconscout') {
+    console.log(`🔀 [AUTO-ROUTER] ${req.url} → /iconscout${req.url}`);
+    req.url = `/iconscout${req.url}`;
+  }
+  else if (referer.includes('/vecteezy') || productCookie === 'vecteezy') {
+    console.log(`🔀 [AUTO-ROUTER] ${req.url} → /vecteezy${req.url}`);
+    req.url = `/vecteezy${req.url}`;
+  }
+
   else if (referer.includes('/turndetect') || productCookie === 'turndetect') {
     console.log(`🔀 [AUTO-ROUTER] ${req.url} → /turndetect${req.url}`);
     req.url = `/turndetect${req.url}`;
   }
-  
+
   next();
 });
 
+router.use((req, res, next) => {
+  // Only handle Freepik if cookie is set
+  if (req.cookies.product === 'freepik') {
+    // Check if it's a Freepik internal path
+    const freepikPaths = ['/pikaso', '/ai', '/wepik', '/slidesgo', '/'];
+    const isFreepikPath = freepikPaths.some(path =>
+      req.url === path || req.url.startsWith(path + '/')
+    );
 
+    if (isFreepikPath) {
+      console.log(`🎨 [FREEPIK ROOT] Handling:`, req.url);
+      // Rewrite to /freepik for the router
+      req.url = `/freepik${req.url}`;
+    }
+  }
+  next();
+});
 
 // ============================================
 // PRODUCT ROUTES (MUST BE LAST!)

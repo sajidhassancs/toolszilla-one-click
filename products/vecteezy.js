@@ -5,29 +5,29 @@ export default {
   // Basic Info
   name: 'vecteezy',
   displayName: 'Vecteezy',
-  
+
   // Target Website
   domain: 'www.vecteezy.com',
-  
+
   // Redirect path after login
   redirectPath: '/',
-  
+
   // Banned paths (product-specific, env vars will also apply)
   bannedPaths: [],  // ✅ Empty - we're using BANNED_URL_PATHS from .env
-  
+
   // Proxy port (if running standalone)
   proxyPort: 8224,
-  
+
   // Use external proxy server
   useExternalProxy: false,
-  
+
   // Domain replacement rules [find, replace]
   replaceRules: [
-    ['static.vecteezy.com', 'localhost:8224/vecteezy/static'],
-    ['cdn.vecteezy.com', 'localhost:8224/vecteezy/cdn'],
-    ['images.vecteezy.com', 'localhost:8224/vecteezy/images']
+    ['static.vecteezy.com', 'dev-server.primewp.net/vecteezy/static'],
+    ['cdn.vecteezy.com', 'dev-server.primewp.net/vecteezy/cdn'],
+    ['images.vecteezy.com', 'dev-server.primewp.net/vecteezy/images']
   ],
-  
+
   // Custom headers for requests
   customHeaders: {
     'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
@@ -43,7 +43,7 @@ export default {
     'upgrade-insecure-requests': '1',
     'accept-encoding': 'gzip, deflate, br'
   },
-  
+
   // Custom cookies (if any static cookies needed)
   customCookies: {}
 };

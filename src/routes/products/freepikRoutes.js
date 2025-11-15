@@ -7,7 +7,7 @@ import freepikConfig from '../../../products/freepik.js';
 import { showLimitReachedPage } from '../../controllers/downloadController.js';
 import { 
   proxyFreepikWithPuppeteer,
-  proxyFreepikAPI,  // ✅ ADD THIS
+  proxyFreepikAPI,
   proxyFreepikStatic,
   proxyFreepikCDN,
   proxyFreepikCDNB,
@@ -22,7 +22,6 @@ import { proxyAssetWithPuppeteer } from './handlers/puppeteerProxy.js';
 const router = express.Router();
 
 console.log('🎨 [FREEPIK] Router initialized');
-
 // Limit reached page
 router.get('/limit-reached', (req, res) => {
   return showLimitReachedPage(req, res, freepikConfig.displayName, 'default');
@@ -31,8 +30,11 @@ router.get('/limit-reached', (req, res) => {
 // ============================================
 // ✅ API ROUTES (MUST BE FIRST!)
 // ============================================
+router.use('/pikaso/api', (req, res) => {
+  console.log('🎨 [PIKASO API] Route hit:', req.originalUrl);
+  return proxyFreepikAPI(req, res);
+});
 
-// API calls
 router.use('/api', (req, res) => {
   console.log('🔌 [FREEPIK] API route hit:', req.originalUrl);
   return proxyFreepikAPI(req, res);
@@ -41,95 +43,75 @@ router.use('/api', (req, res) => {
 // Manifest
 router.get('/manifest.json', (req, res) => {
   console.log('📄 [FREEPIK] Manifest route hit');
-  return proxyFreepikManifest(req, res);  // ✅ CHANGED THIS
+  return proxyFreepikManifest(req, res);
 });
 
 // ============================================
-// ✅ STATIC ASSETS (BEFORE CATCH-ALL!)
+// ✅ BLOCK CDN-CGI
 // ============================================
+router.all(/^\/cdn-cgi\/.*$/, (req, res) => {
+  console.log('🚫 [FREEPIK] Blocking cdn-cgi');
+  return res.status(200).json({ success: true });
+});
 
-// Handle /staticfiles/ explicitly
-router.use('/staticfiles', (req, res) => {
-  console.log('📦 [STATIC FILES] Asset proxy:', req.originalUrl);
+// ============================================
+// ✅ STATIC ASSETS
+// ============================================
+router.use('/_next', (req, res) => {
+  console.log('📦 [NEXT.JS] Static file:', req.originalUrl);
   return proxyAssetWithPuppeteer(req, res, freepikConfig, 'www.freepik.com');
 });
 
-// Static files
+router.use('/staticfiles', (req, res) => {
+  return proxyAssetWithPuppeteer(req, res, freepikConfig, 'www.freepik.com');
+});
+
 router.use('/static', (req, res) => {
-  console.log('🎨 [FREEPIK] Static route hit');
   return proxyFreepikStatic(req, res);
 });
 
-// CDN files
 router.use('/cdn', (req, res) => {
-  console.log('🎨 [FREEPIK] CDN route hit');
   return proxyFreepikCDN(req, res);
 });
 
-// CDN B files
 router.use('/cdnb', (req, res) => {
-  console.log('🎨 [FREEPIK] CDNB route hit');
   return proxyFreepikCDNB(req, res);
 });
 
-// Image files (img.freepik.com)
 router.use('/img', (req, res) => {
-  console.log('🎨 [FREEPIK] Img route hit');
   return proxyFreepikImg(req, res);
 });
 
-// Image files (image.freepik.com)
 router.use('/image', (req, res) => {
-  console.log('🎨 [FREEPIK] Image route hit');
   return proxyFreepikImage(req, res);
 });
 
-// Assets
 router.use('/assets', (req, res) => {
-  console.log('🎨 [FREEPIK] Assets route hit');
   return proxyFreepikAssets(req, res);
 });
 
-// FPS (Freepik Premium Service)
 router.use('/fps', (req, res) => {
-  console.log('🎨 [FREEPIK] FPS route hit');
   return proxyFreepikFPS(req, res);
 });
 
-// CSS files
 router.use('/css', (req, res) => {
   return proxyAssetWithPuppeteer(req, res, freepikConfig, 'www.freepik.com');
 });
 
-// JavaScript files
 router.use('/js', (req, res) => {
   return proxyAssetWithPuppeteer(req, res, freepikConfig, 'www.freepik.com');
 });
 
-// Font files
 router.use('/fonts', (req, res) => {
   return proxyAssetWithPuppeteer(req, res, freepikConfig, 'www.freepik.com');
 });
 
 // ============================================
-// 🎭 CATCH-ALL FOR HTML PAGES (MUST BE LAST!)
+// 🎭 CATCH-ALL (MUST BE LAST!)
 // ============================================
 router.use((req, res) => {
-  console.log('🎨 [FREEPIK] Catch-all handler triggered');
-  console.log('   Method:', req.method);
-  console.log('   Path:', req.path);
-  console.log('   URL:', req.url);
-  console.log('   Original URL:', req.originalUrl);
-  
-  // ✅ Add this check to see what's actually being requested
-  if (req.path === '' || req.path === '/') {
-    console.log('   → Root path, loading homepage');
-  } else {
-    console.log('   → Internal page:', req.path);
-  }
-  
+  console.log('🎨 [FREEPIK] Catch-all:', req.path);
   return proxyFreepikWithPuppeteer(req, res);
 });
 
-// ✅ CRITICAL: Export default router
 export default router;

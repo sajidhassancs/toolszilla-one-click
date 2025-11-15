@@ -7,10 +7,14 @@ import { getDataFromApiWithoutVerify } from '../../../services/apiService.js';
  */
 export async function proxyWithPuppeteer(req, res, productConfig) {
   let browser = null;
-  
+
   try {
     console.log('🎭 Puppeteer proxy request:', req.method, req.originalUrl);
+    console.log('🔧 Rewriting URLs in HTML...');
 
+    // ✅ DETECT PROTOCOL - Use https for production, http for localhost
+    const isLocalhost = req.get('host').includes('localhost') || req.get('host').includes('127.0.0.1');
+    const protocol = isLocalhost ? 'http' : 'https';
     // Validate user session
     const userData = await decryptUserCookies(req);
     if (userData.redirect) {
@@ -48,12 +52,12 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
     // req.url is relative to the router and doesn't include the product prefix
     const productPrefix = `/${productConfig.name}`;
     let requestPath = req.url;
-    
+
     // ✅ Only remove prefix if it somehow still exists (shouldn't happen with req.url)
     if (requestPath.startsWith(productPrefix)) {
       requestPath = requestPath.substring(productPrefix.length);
     }
-    
+
     // ✅ Ensure path starts with /
     if (!requestPath.startsWith('/')) {
       requestPath = '/' + requestPath;
@@ -67,56 +71,6 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
     browser = await getBrowser();
     const page = await browser.newPage();
 
-    // ✅ STEALTH MODE - Only for Freepik (bypass CloudFlare)
-    if (productConfig.name === 'freepik') {
-      console.log('🥷 Enabling stealth mode for Freepik...');
-      
-      await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-      
-      await page.setViewport({
-        width: 1920,
-        height: 1080,
-        deviceScaleFactor: 1
-      });
-      
-      await page.evaluateOnNewDocument(() => {
-        Object.defineProperty(navigator, 'webdriver', {
-          get: () => false,
-        });
-        
-        Object.defineProperty(navigator, 'plugins', {
-          get: () => [1, 2, 3, 4, 5],
-        });
-        
-        Object.defineProperty(navigator, 'languages', {
-          get: () => ['en-US', 'en'],
-        });
-        
-        window.chrome = {
-          runtime: {},
-        };
-        
-        const originalQuery = window.navigator.permissions.query;
-        window.navigator.permissions.query = (parameters) => (
-          parameters.name === 'notifications' ?
-            Promise.resolve({ state: Notification.permission }) :
-            originalQuery(parameters)
-        );
-      });
-      
-      await page.setExtraHTTPHeaders({
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Upgrade-Insecure-Requests': '1',
-        'Sec-Fetch-Site': 'none',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-User': '?1',
-        'Sec-Fetch-Dest': 'document'
-      });
-      
-      console.log('✅ Stealth mode enabled');
-    }
-
     // ✅ CRITICAL FIX: ENABLE INTERCEPTION FIRST!
     await page.setRequestInterception(true);
 
@@ -124,7 +78,7 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
     page.on('request', (request) => {
       const url = request.url();
       const resourceType = request.resourceType();
-      
+
       // ✅ AGGRESSIVE BLOCKING: Block analytics and tracking
       const blockedPatterns = [
         'bat.bing.com',
@@ -154,19 +108,19 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
         'facebook.net',
         'Meta Pixel'
       ];
-      
+
       // Check if URL matches any blocked pattern
       if (blockedPatterns.some(pattern => url.includes(pattern))) {
         console.log(`🚫 Blocked: ${url}`);
         return request.abort('blockedbyclient');
       }
-      
+
       // ✅ Also block beacon/ping requests
       if (resourceType === 'beacon' || resourceType === 'ping') {
         console.log(`🚫 Blocked ${resourceType}: ${url}`);
         return request.abort('blockedbyclient');
       }
-      
+
       return request.continue();
     });
 
@@ -182,56 +136,52 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
       sameSite: cookie.sameSite || 'Lax'
     }));
 
-    // ✅ IMPROVED: Inject script to intercept fetch/XHR BEFORE navigation
-    await page.evaluateOnNewDocument((productPrefix) => {
-      console.log('🔧 [INTERCEPTOR] Product prefix:', productPrefix);
+    // ✅ CONDITIONAL INTERCEPTOR - Skip for Freepik since pages load from actual domain
+    if (productConfig.name !== 'freepik') {
+      await page.evaluateOnNewDocument((productPrefix) => {
+        console.log('🔧 [INTERCEPTOR] Product prefix:', productPrefix);
 
-      // Intercept fetch
-      const originalFetch = window.fetch;
-      window.fetch = function(...args) {
-        let url = args[0];
-        
-        // Only rewrite if URL starts with / and is going to OUR proxy, not Freepik's server
-        if (typeof url === 'string' && url.startsWith('/') && !url.startsWith(productPrefix)) {
-          // Check if this is already pointing to Freepik's domain (don't rewrite)
-          if (url.includes('freepik.com') || url.includes('cdnpk.net')) {
-            console.log('[FETCH] Skipping rewrite for Freepik URL:', url);
-            return originalFetch.apply(this, args);
+        // Intercept fetch
+        const originalFetch = window.fetch;
+        window.fetch = function (...args) {
+          let url = args[0];
+
+          if (typeof url === 'string' && url.startsWith('/') && !url.startsWith(productPrefix)) {
+            const newUrl = productPrefix + url;
+            console.log('[FETCH INTERCEPTED]', url, '→', newUrl);
+            args[0] = newUrl;
           }
-          
-          const newUrl = productPrefix + url;
-          console.log('[FETCH INTERCEPTED]', url, '→', newUrl);
-          args[0] = newUrl;
-        }
-        
-        return originalFetch.apply(this, args);
-      };
 
-      // Intercept XMLHttpRequest
-      const originalOpen = XMLHttpRequest.prototype.open;
-      XMLHttpRequest.prototype.open = function(method, url, ...rest) {
-        // If URL starts with /, add product prefix
-        if (typeof url === 'string' && url.startsWith('/') && !url.startsWith(productPrefix)) {
-          const newUrl = productPrefix + url;
-          console.log('[XHR INTERCEPTED]', url, '→', newUrl);
-          url = newUrl;
-        }
-        
-        return originalOpen.call(this, method, url, ...rest);
-      };
-
-      // 🔥 NEW: Intercept Request constructor for modern frameworks
-      if (window.Request) {
-        const OriginalRequest = window.Request;
-        window.Request = function(input, init) {
-          if (typeof input === 'string' && input.startsWith('/') && !input.startsWith(productPrefix)) {
-            console.log('[REQUEST INTERCEPTED]', input, '→', productPrefix + input);
-            input = productPrefix + input;
-          }
-          return new OriginalRequest(input, init);
+          return originalFetch.apply(this, args);
         };
-      }
-    }, productPrefix);
+
+        // Intercept XMLHttpRequest
+        const originalOpen = XMLHttpRequest.prototype.open;
+        XMLHttpRequest.prototype.open = function (method, url, ...rest) {
+          if (typeof url === 'string' && url.startsWith('/') && !url.startsWith(productPrefix)) {
+            const newUrl = productPrefix + url;
+            console.log('[XHR INTERCEPTED]', url, '→', newUrl);
+            url = newUrl;
+          }
+
+          return originalOpen.call(this, method, url, ...rest);
+        };
+
+        // Intercept Request constructor
+        if (window.Request) {
+          const OriginalRequest = window.Request;
+          window.Request = function (input, init) {
+            if (typeof input === 'string' && input.startsWith('/') && !input.startsWith(productPrefix)) {
+              console.log('[REQUEST INTERCEPTED]', input, '→', productPrefix + input);
+              input = productPrefix + input;
+            }
+            return new OriginalRequest(input, init);
+          };
+        }
+      }, productPrefix);
+    } else {
+      console.log('⚠️ Skipping fetch interceptor for Freepik (pages load from actual domain)');
+    }
 
     // Navigate to page FIRST (without cookies)
     console.log('🚀 Attempting to load page...');
@@ -243,31 +193,134 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
       }
     });
 
+    // ✅ CONDITIONAL: Only intercept history for non-Freepik products
+    if (productConfig.name !== 'freepik') {
+      await page.evaluateOnNewDocument((prefix) => {
+        const pushState = history.pushState;
+        history.pushState = function (state, title, url) {
+          if (url.startsWith('/') && !url.startsWith(prefix)) {
+            url = prefix + url;
+          }
+          return pushState.apply(this, [state, title, url]);
+        };
+      }, productPrefix);
+    }
+
     // Try to load with a very permissive strategy
     try {
-      await page.goto(targetUrl, { 
+      await page.goto(targetUrl, {
         waitUntil: 'domcontentloaded',
         timeout: 30000
       });
       console.log('✅ Page loaded');
-      
+
       // ✅ NOW SET COOKIES AFTER PAGE LOADS
       console.log('🍪 Setting cookies after page load...');
-      await page.setCookie(...puppeteerCookies);
-      console.log('✅ Set', puppeteerCookies.length, 'cookies in browser');
-      
+
+      // ✅ FOR FREEPIK: Set cookies with multiple domain variants
+      if (productConfig.name === 'freepik') {
+        const freepikCookies = [];
+
+        cookiesArray.forEach(cookie => {
+          // Add cookie for .freepik.com
+          freepikCookies.push({
+            name: cookie.name,
+            value: cookie.value,
+            domain: '.freepik.com',
+            path: '/',
+            expires: cookie.expirationDate || -1,
+            httpOnly: cookie.httpOnly || false,
+            secure: cookie.secure || true,
+            sameSite: 'Lax'
+          });
+
+          // Also add for www.freepik.com
+          freepikCookies.push({
+            name: cookie.name,
+            value: cookie.value,
+            domain: 'www.freepik.com',
+            path: '/',
+            expires: cookie.expirationDate || -1,
+            httpOnly: cookie.httpOnly || false,
+            secure: cookie.secure || true,
+            sameSite: 'Lax'
+          });
+        });
+
+        await page.setCookie(...freepikCookies);
+        console.log('✅ Set', freepikCookies.length, 'Freepik cookies (with domain variants)');
+      } else {
+        await page.setCookie(...puppeteerCookies);
+        console.log('✅ Set', puppeteerCookies.length, 'cookies in browser');
+      }
+
       // Verify cookies were set
       const actualCookies = await page.cookies();
       console.log('🔍 Cookies in browser:', actualCookies.length);
-      
+
+
+      // ✅ INJECT FETCH INTERCEPTOR BEFORE RELOAD (for Freepik)
+      if (productConfig.name === 'freepik') {
+        console.log('🔧 Injecting fetch interceptor into page before reload...');
+
+        const proxyHost = req.get('host');
+
+        await page.evaluateOnNewDocument((proxyHost, protocol) => {
+          console.log('🔧 [FREEPIK] Installing fetch interceptor...');
+          console.log('   Proxy:', protocol + '://' + proxyHost);
+
+          const originalFetch = window.fetch;
+          window.fetch = function (...args) {
+            let url = args[0];
+
+            // Intercept absolute URLs to www.freepik.com
+            if (typeof url === 'string') {
+              if (url.startsWith('https://www.freepik.com/')) {
+                const path = url.replace('https://www.freepik.com', '');
+                const newUrl = protocol + '://' + proxyHost + '/freepik' + path;
+                console.log('[FETCH INTERCEPTED]', url, '→', newUrl);
+                args[0] = newUrl;
+              } else if (url.startsWith('/') && !url.startsWith('/_next')) {
+                const newUrl = protocol + '://' + proxyHost + '/freepik' + url;
+                console.log('[FETCH INTERCEPTED]', url, '→', newUrl);
+                args[0] = newUrl;
+              }
+            }
+
+            return originalFetch.apply(this, args);
+          };
+
+          const originalOpen = XMLHttpRequest.prototype.open;
+          XMLHttpRequest.prototype.open = function (method, url, ...rest) {
+            if (typeof url === 'string') {
+              if (url.startsWith('https://www.freepik.com/')) {
+                const path = url.replace('https://www.freepik.com', '');
+                const newUrl = protocol + '://' + proxyHost + '/freepik' + path;
+                console.log('[XHR INTERCEPTED]', url, '→', newUrl);
+                url = newUrl;
+              } else if (url.startsWith('/') && !url.startsWith('/_next')) {
+                const newUrl = protocol + '://' + proxyHost + '/freepik' + url;
+                console.log('[XHR INTERCEPTED]', url, '→', newUrl);
+                url = newUrl;
+              }
+            }
+            return originalOpen.call(this, method, url, ...rest);
+          };
+
+          console.log('✅ Fetch interceptor installed');
+        }, proxyHost, protocol);
+
+        console.log('✅ Fetch interceptor ready');
+      }
       // Reload page to apply cookies
       console.log('🔄 Reloading page with cookies...');
       await page.reload({ waitUntil: 'networkidle2', timeout: 30000 });
       console.log('✅ Page reloaded successfully with cookies');
-      
+
+
     } catch (error) {
       console.error('❌ Page load failed:', error.message);
-      
+
       // Try to get partial content anyway
       console.log('🔄 Attempting to get partial content...');
       try {
@@ -281,6 +334,7 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
         throw error;
       }
     }
+    // ✅ IMPROVED URL REWRITING
 
     // Get page content
     let html = await page.content();
@@ -291,17 +345,60 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
 <script>
 (function() {
   console.log('🍪 Setting cookies in browser...');
-  ${puppeteerCookies.map(cookie => 
-    `document.cookie = '${cookie.name}=${cookie.value}; path=${cookie.path}; domain=${cookie.domain}; ${cookie.secure ? 'secure;' : ''} samesite=${cookie.sameSite}';`
-  ).join('\n  ')}
+  ${puppeteerCookies.map(cookie =>
+      `document.cookie = '${cookie.name}=${cookie.value}; path=${cookie.path}; domain=${cookie.domain}; ${cookie.secure ? 'secure;' : ''} samesite=${cookie.sameSite}';`
+    ).join('\n  ')}
   console.log('✅ Cookies set!');
 })();
 </script>`;
 
+    // ✅ ADD FETCH INTERCEPTOR FOR FREEPIK
+    let fetchInterceptorScript = '';
+    if (productConfig.name === 'freepik') {
+      const proxyHost = req.get('host');
+
+      fetchInterceptorScript = `
+<script>
+(function() {
+  console.log('🔧 [FREEPIK] Installing fetch interceptor...');
+  
+  const originalFetch = window.fetch;
+  window.fetch = function(...args) {
+    let url = args[0];
+    
+    // Intercept all relative URLs except /_next
+    if (typeof url === 'string' && url.startsWith('/') && !url.startsWith('/freepik') && !url.startsWith('/_next')) {
+      const newUrl = '/freepik' + url;
+      console.log('[FETCH INTERCEPTED]', url, '→', newUrl);
+      args[0] = newUrl;
+    }
+    
+    return originalFetch.apply(this, args);
+  };
+  
+  // Also intercept XMLHttpRequest
+  const originalOpen = XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open = function(method, url, ...rest) {
+    if (typeof url === 'string' && url.startsWith('/') && !url.startsWith('/freepik') && !url.startsWith('/_next')) {
+      const newUrl = '/freepik' + url;
+      console.log('[XHR INTERCEPTED]', url, '→', newUrl);
+      url = newUrl;
+    }
+    return originalOpen.call(this, method, url, ...rest);
+  };
+  
+  console.log('✅ Fetch interceptor installed - will prefix all relative URLs with /freepik');
+})();
+</script>`;
+    }
+
     // Inject before </head>
     if (html.includes('</head>')) {
-      html = html.replace('</head>', `${cookieScript}</head>`);
+      html = html.replace('</head>', `${cookieScript}${fetchInterceptorScript}</head>`);
       console.log('   ✅ Injected cookie script');
+      if (fetchInterceptorScript) {
+        console.log('   ✅ Injected fetch interceptor');
+      }
     } else {
       console.log('   ⚠️ No </head> tag found');
     }
@@ -318,15 +415,10 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
       console.log('✅ HTML contains logout/profile indicators - likely logged in');
     }
 
-    // ✅ IMPROVED URL REWRITING
-    console.log('🔧 Rewriting URLs in HTML...');
-    
-    // ✅ DETECT PROTOCOL - Use https for production, http for localhost
-    const isLocalhost = req.get('host').includes('localhost') || req.get('host').includes('127.0.0.1');
-    const protocol = isLocalhost ? 'http' : 'https';
+
     const localProxyBase = `${protocol}://${req.get('host')}${productPrefix}`;
 
-    // 🔥 CONDITIONAL BASE TAG - Skip for Epidemic Sound & Freepik (prevents issues)
+    // 🔥 CONDITIONAL BASE TAG - Skip for Epidemic Sound & Freepik
     if (productConfig.name !== 'epidemicsound' && productConfig.name !== 'freepik') {
       const baseTag = `<base href="${localProxyBase}/">`;
       if (html.includes('<head>')) {
@@ -336,7 +428,7 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
       }
       console.log('   ✅ Injected base tag:', baseTag);
     } else {
-      console.log('   ⚠️ Skipped base tag for', productConfig.name, '(prevents double prefixing)');
+      console.log('   ⚠️ Skipped base tag for', productConfig.name);
     }
 
     // 1. Replace absolute domain URLs
@@ -345,36 +437,45 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
       localProxyBase
     );
 
-    // 🔥 Fix API calls and manifest in JavaScript/JSON
-    html = html.replace(/["']\/api\//g, `"${productPrefix}/api/`);
-    html = html.replace(/["']\/session\//g, `"${productPrefix}/session/`);
-    html = html.replace(/["']\/manifest\.json/g, `"${productPrefix}/manifest.json`);
-
-    // 3. Fix relative paths (starting with /)
-    html = html.replace(/href="\/(?!\/)/g, `href="${productPrefix}/`);
-    html = html.replace(/href='\/(?!\/)/g, `href='${productPrefix}/`);
-    
-    html = html.replace(/src="\/(?!\/)/g, `src="${productPrefix}/`);
-    html = html.replace(/src='\/(?!\/)/g, `src='${productPrefix}/`);
-    
-    html = html.replace(/srcset="\/(?!\/)/g, `srcset="${productPrefix}/`);
-    html = html.replace(/srcset='\/(?!\/)/g, `srcset='${productPrefix}/`);
-    
-    html = html.replace(/action="\/(?!\/)/g, `action="${productPrefix}/`);
-    html = html.replace(/action='\/(?!\/)/g, `action='${productPrefix}/`);
-    
-    html = html.replace(/url\(\/(?!\/)/g, `url(${productPrefix}/`);
-    html = html.replace(/url\("\/(?!\/)/g, `url("${productPrefix}/`);
-    html = html.replace(/url\('\/(?!\/)/g, `url('${productPrefix}/`);
-
-    // 4. Fix localhost/production HTTPS references
-    const currentHost = req.get('host');
-    if (isLocalhost) {
-      html = html.replace(/https:\/\/localhost:8224/g, 'http://localhost:8224');
+    // 🔥 FOR FREEPIK: No URL rewriting (works at root level)
+    if (productConfig.name === 'freepik') {
+      console.log('   🔧 Freepik mode: No URL rewriting (works at root level)');
+      // Freepik works at root level - no rewriting needed
     } else {
-      // Fix any remaining localhost references to production
-      html = html.replace(/http:\/\/localhost:8224/g, `https://${currentHost}`);
-      html = html.replace(/https:\/\/localhost:8224/g, `https://${currentHost}`);
+      // Normal rewriting for other products
+
+      // 2. Fix API calls and manifest in JavaScript/JSON
+      html = html.replace(/["']\/api\//g, `"${productPrefix}/api/`);
+      html = html.replace(/["']\/session\//g, `"${productPrefix}/session/`);
+      html = html.replace(/["']\/manifest\.json/g, `"${productPrefix}/manifest.json`);
+
+      // 💥 Critical: Fix internal navigation links
+      html = html.replace(/href="\/(?!static|cdn|img|image|api)([^"]+)"/g, `href="${productPrefix}/$1"`);
+      html = html.replace(/href='\/(?!static|cdn|img|image|api)([^']+)'/g, `href='${productPrefix}/$1'`);
+
+      html = html.replace(/src="\/(?!static|cdn|img|image|api)([^"]+)"/g, `src="${productPrefix}/$1"`);
+      html = html.replace(/src='\/(?!static|cdn|img|image|api)([^']+)'/g, `src='${productPrefix}/$1'`);
+
+      html = html.replace(/data-href="\/([^"]+)"/g, `data-href="${productPrefix}/$1"`);
+
+      html = html.replace(/srcset="\/(?!\/)/g, `srcset="${productPrefix}/`);
+      html = html.replace(/srcset='\/(?!\/)/g, `srcset='${productPrefix}/`);
+
+      html = html.replace(/action="\/(?!\/)/g, `action="${productPrefix}/`);
+      html = html.replace(/action='\/(?!\/)/g, `action='${productPrefix}/`);
+
+      html = html.replace(/url\(\/(?!\/)/g, `url(${productPrefix}/`);
+      html = html.replace(/url\("\/(?!\/)/g, `url("${productPrefix}/`);
+      html = html.replace(/url\('\/(?!\/)/g, `url('${productPrefix}/`);
+
+      // 4. Fix localhost/production HTTPS references
+      const currentHost = req.get('host');
+      if (isLocalhost) {
+        html = html.replace(/https:\/\/localhost:8224/g, 'http://localhost:8224');
+      } else {
+        html = html.replace(/http:\/\/localhost:8224/g, `https://${currentHost}`);
+        html = html.replace(/https:\/\/localhost:8224/g, `https://${currentHost}`);
+      }
     }
 
     // 5. Fix double slashes
@@ -392,7 +493,7 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
   } catch (error) {
     console.error('❌ Puppeteer proxy error:', error.message);
     console.error('Stack:', error.stack);
-    
+
     return res.status(500).json({
       error: 'Proxy failed',
       message: error.message
@@ -405,7 +506,7 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
  */
 export async function proxyAssetWithPuppeteer(req, res, productConfig, assetDomain) {
   let browser = null;
-  
+
   try {
     console.log('🎨 Asset proxy request:', req.originalUrl);
 
@@ -442,12 +543,12 @@ export async function proxyAssetWithPuppeteer(req, res, productConfig, assetDoma
     // ✅ FIX: Use req.url instead of req.originalUrl
     const productPrefix = `/${productConfig.name}`;
     let assetPath = req.url;
-    
+
     // ✅ Only remove prefix if it somehow still exists
     if (assetPath.startsWith(productPrefix)) {
       assetPath = assetPath.substring(productPrefix.length);
     }
-    
+
     // ✅ Ensure path starts with /
     if (!assetPath.startsWith('/')) {
       assetPath = '/' + assetPath;
@@ -467,7 +568,7 @@ export async function proxyAssetWithPuppeteer(req, res, productConfig, assetDoma
     // ✅ THEN SETUP REQUEST HANDLER
     page.on('request', (request) => {
       const url = request.url();
-      
+
       if (
         url.includes('bat.bing.com') ||
         url.includes('bat.bing.net') ||
@@ -524,12 +625,12 @@ export async function proxyAssetWithPuppeteer(req, res, productConfig, assetDoma
     // For CSS/JS, rewrite URLs
     if (contentType.includes('css') || contentType.includes('javascript')) {
       let content = buffer.toString('utf-8');
-      
+
       // ✅ DETECT PROTOCOL
       const isLocalhost = req.get('host').includes('localhost') || req.get('host').includes('127.0.0.1');
       const protocol = isLocalhost ? 'http' : 'https';
       const localProxyBase = `${protocol}://${req.get('host')}${productPrefix}`;
-      
+
       // Replace domain references
       content = content.replace(
         new RegExp(`https://${productConfig.domain.replace(/\./g, '\\.')}`, 'g'),
@@ -539,12 +640,12 @@ export async function proxyAssetWithPuppeteer(req, res, productConfig, assetDoma
         new RegExp(`//${productConfig.domain.replace(/\./g, '\\.')}`, 'g'),
         localProxyBase
       );
-      
+
       // ✅ Fix relative paths in CSS/JS
       content = content.replace(/url\(\/(?!\/)/g, `url(${productPrefix}/`);
       content = content.replace(/url\("\/(?!\/)/g, `url("${productPrefix}/`);
       content = content.replace(/url\('\/(?!\/)/g, `url('${productPrefix}/`);
-      
+
       // Fix localhost/production references
       if (isLocalhost) {
         content = content.replace(/https:\/\/localhost:8224/g, 'http://localhost:8224');

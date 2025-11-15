@@ -1,11 +1,10 @@
 /**
  * StealthWriter Routes
- * Product-specific routes for StealthWriter
  */
 import express from 'express';
 import stealthwriterConfig from '../../../products/stealthwriter.js';
 import { showLimitReachedPage } from '../../controllers/downloadController.js';
-import { 
+import {
   proxyStealthWriterWithPuppeteer
 } from './handlers/stealthwriterHandlers.js';
 
@@ -21,15 +20,8 @@ router.get('/limit-reached', (req, res) => {
 });
 
 // ============================================
-// 🎭 CATCH-ALL PROXY - Handles EVERYTHING
+// 🎭 CATCH-ALL PROXY
 // ============================================
-// This single handler manages:
-// - Homepage (/)
-// - All pages (/ai-detector, /contact, etc.)
-// - Next.js assets (/_next/static/...)
-// - API calls (/api/...)
-// - Static files (/images/, /css/, /js/, etc.)
-// - Logo and icons (/*.svg, /*.png, etc.)
 router.use((req, res) => {
   console.log('🎯 [STEALTHWRITER] Request:', req.method, req.originalUrl);
   return proxyStealthWriterWithPuppeteer(req, res);

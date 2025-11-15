@@ -5,31 +5,31 @@ export default {
   // Basic Info
   name: 'storyblocks',
   displayName: 'Storyblocks',
-  
+
   // Target Website
   domain: 'www.storyblocks.com',
-  
+
   // Redirect path after login
   redirectPath: '/',
-  
+
   // Banned paths (product-specific, env vars will also apply)
   bannedPaths: [],  // ✅ Empty - we're using BANNED_URL_PATHS from .env
-  
+
   // Proxy port (if running standalone)
   proxyPort: 8224,
-  
+
   // Use external proxy server
   useExternalProxy: false,
-  
+
   // Domain replacement rules [find, replace]
   replaceRules: [
-    ['static.storyblocks.com', 'localhost:8224/storyblocks/static'],
-    ['cdn.storyblocks.com', 'localhost:8224/storyblocks/cdn'],
-    ['content.storyblocks.com', 'localhost:8224/storyblocks/content'],
-    ['images.storyblocks.com', 'localhost:8224/storyblocks/images'],
-    ['media.storyblocks.com', 'localhost:8224/storyblocks/media']
+    ['static.storyblocks.com', 'dev-server.primewp.net/storyblocks/static'],
+    ['cdn.storyblocks.com', 'dev-server.primewp.net/storyblocks/cdn'],
+    ['content.storyblocks.com', 'dev-server.primewp.net/storyblocks/content'],
+    ['images.storyblocks.com', 'dev-server.primewp.net/storyblocks/images'],
+    ['media.storyblocks.com', 'dev-server.primewp.net/storyblocks/media']
   ],
-  
+
   // Custom headers for requests
   customHeaders: {
     'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
@@ -45,7 +45,7 @@ export default {
     'upgrade-insecure-requests': '1',
     'accept-encoding': 'gzip, deflate, br'
   },
-  
+
   // Custom cookies (if any static cookies needed)
   customCookies: {}
 };

@@ -5,7 +5,7 @@ import express from 'express';
 import envatoConfig from '../../../products/envato.js';
 import { handleProxyRequest } from '../../controllers/proxyController.js';
 import { showLimitReachedPage } from '../../controllers/downloadController.js';
-import { 
+import {
   processEnvatoDownload,
   proxyEnvatoAssets,
   proxyEnvatoImages,
@@ -34,11 +34,11 @@ router.use((req, res, next) => {
   res.set('Access-Control-Allow-Origin', '*');
   res.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.set('Access-Control-Allow-Headers', '*');
-  
+
   if (req.method === 'OPTIONS') {
     return res.sendStatus(200);
   }
-  
+
   next();
 });
 
@@ -76,24 +76,24 @@ router.use('/lazy', async (req, res) => {
   try {
     const userData = await decryptUserCookies(req);
     if (userData.redirect) return res.redirect(userData.redirect);
-    
+
     const prefix = userData.prefix;
     const apiData = await getDataFromApiWithoutVerify(prefix);
     const accountsArray = apiData.access_configuration_preferences[0].accounts;
     const currentIndex = getCurrentRotationIndex(accountsArray.length);
     let cookiesArray = accountsArray[currentIndex];
-    
+
     if (typeof cookiesArray === 'string') {
       cookiesArray = JSON.parse(cookiesArray);
     }
-    
+
     const cookieString = cookiesArray.map(c => `${c.name}=${c.value}`).join('; ');
-    
+
     // Keep /data-api/lazy in the path
     const targetUrl = `https://elements.envato.com/data-api${req.url}`;
-    
+
     console.log('🎯 Lazy API:', targetUrl);
-    
+
     const response = await axios({
       method: req.method,
       url: targetUrl,
@@ -104,11 +104,11 @@ router.use('/lazy', async (req, res) => {
       },
       validateStatus: () => true
     });
-    
+
     if (response.status === 404) {
       return res.status(200).json({ data: [] });
     }
-    
+
     res.set('Access-Control-Allow-Origin', '*');
     return res.status(response.status).send(response.data);
   } catch (error) {
@@ -116,31 +116,31 @@ router.use('/lazy', async (req, res) => {
     return res.status(200).json({ data: [] });
   }
 });
-// Add this BEFORE the auto-router section
-router.get('/manifest.webmanifest', (req, res) => {
-  const productCookie = req.cookies.product || '';
-  
-  if (productCookie === 'envato') {
-    return res.json({
-      name: "Envato Elements",
-      short_name: "Elements",
-      start_url: "/envato",
-      display: "standalone",
-      theme_color: "#82b541",
-      background_color: "#ffffff",
-      icons: []
-    });
-  }
-  
-  // Default
-  return res.json({
-    name: "ToolsZilla",
-    short_name: "ToolsZilla",
-    start_url: "/",
-    display: "standalone",
-    icons: []
-  });
-});
+// // Add this BEFORE the auto-router section
+// router.get('/manifest.webmanifest', (req, res) => {
+//   const productCookie = req.cookies.product || '';
+
+//   if (productCookie === 'envato') {
+//     return res.json({
+//       name: "Envato Elements",
+//       short_name: "Elements",
+//       start_url: "/envato",
+//       display: "standalone",
+//       theme_color: "#82b541",
+//       background_color: "#ffffff",
+//       icons: []
+//     });
+//   }
+
+//   // Default
+//   return res.json({
+//     name: "ToolsZilla",
+//     short_name: "ToolsZilla",
+//     start_url: "/",
+//     display: "standalone",
+//     icons: []
+//   });
+// });
 router.get('/favicon.svg', (req, res) => {
   return handleProxyRequest(req, res, envatoConfig);
 });

@@ -5,35 +5,34 @@ export default {
   // Basic Info
   name: 'envato',
   displayName: 'Envato Elements',
-  
+
   // Target Website
   domain: 'elements.envato.com',
-  
+
   // Redirect path after login
   redirectPath: '/',
-  
+
   // Banned paths
   bannedPaths: [],
-  
+
   // Proxy port
   proxyPort: 8224,
-  
+
   // Use external proxy server - IMPORTANT for Envato!
   useExternalProxy: true,  // ✅ Envato needs proxies
-  
-  // ✅ NEW: Asset domains to rewrite in HTML
-// ✅ NEW: Asset domains to rewrite in HTML
-assetDomains: [
-  { from: 'elements.envato.com', to: '' },  // ✅ Main domain - rewrite to root (no prefix)
-  { from: 'assets.elements.envato.com', to: '/assets' },
-  { from: 'elements-assets.envato.com', to: '/images' },
-  { from: 'elements-resized.envatousercontent.com', to: '/images' },
-  { from: 'account.envato.com', to: '/account' }
-],
-  
+
+  // ✅ Asset domains to rewrite in HTML (dynamically uses current host)
+  assetDomains: [
+    { from: 'elements.envato.com', to: '' },  // ✅ Main domain - rewrite to root (no prefix)
+    { from: 'assets.elements.envato.com', to: '/assets' },
+    { from: 'elements-assets.envato.com', to: '/images' },
+    { from: 'elements-resized.envatousercontent.com', to: '/images' },
+    { from: 'account.envato.com', to: '/account' }
+  ],
+
   // Domain replacement rules [find, replace] - DEPRECATED (use assetDomains instead)
   replaceRules: [],
-  
+
   // Custom headers for requests
   customHeaders: {
     'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
@@ -49,7 +48,7 @@ assetDomains: [
     'upgrade-insecure-requests': '1',
     'accept-encoding': 'gzip'
   },
-  
+
   // Custom cookies
   customCookies: {}
 };
