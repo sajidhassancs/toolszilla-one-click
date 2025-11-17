@@ -111,8 +111,18 @@ router.get('/setup-session', (req, res) => {
   } else if (productName === 'iconscout') {
     console.log(`🔀 Redirecting to: / (Iconscout homepage - no prefix)`);
     return res.redirect('/');  // ✅ ADD THIS - Same as Epidemic Sound
+
+  } else if (productName === 'storyblocks') {  // ✅ ADD THIS
+    console.log(`🔀 Redirecting to: / (Storyblocks homepage - no prefix)`);
+    return res.redirect('/');
+
+
   } else if (productName === 'stealthwriter') {  // ✅ ADD THIS
     console.log(`🔀 Redirecting to: /dashboard (StealthWriter - no prefix)`);
+    return res.redirect('/dashboard');
+
+  } else if (productName === 'turndetect') {  // ✅ ADD THIS
+    console.log(`🔀 Redirecting to: /dashboard (TurnDetect - no prefix)`);
     return res.redirect('/dashboard');
   } else {
     console.log(`🔀 Redirecting to: /${productName}`);
@@ -535,6 +545,9 @@ router.use((req, res, next) => {
     } else if (productCookie === 'freepik') {
       console.log(`🔀 [ROOT API] ${req.originalUrl} → /freepik${req.originalUrl}`);
       req.url = `/freepik${req.originalUrl}`;
+    } else if (productCookie === 'storyblocks') {  // ✅ ADD THIS
+      console.log(`🔀 [ROOT API] ${req.originalUrl} → /storyblocks${req.originalUrl}`);
+      req.url = `/storyblocks${req.originalUrl}`;
     }
   }
 
@@ -565,7 +578,44 @@ router.get('/manifest.webmanifest', (req, res) => {
     icons: []
   });
 });
+// ============================================
+// ✅ FREEPIK INTERNAL PATHS HANDLER (BEFORE AUTO-ROUTER)
+// ============================================
+// ============================================
+// ✅ FREEPIK: SERVE INTERNAL PATHS DIRECTLY (NO /freepik PREFIX!)
+// ============================================
+router.use((req, res, next) => {
+  const productCookie = req.cookies.product || '';
 
+  // Only process if Freepik cookie is set
+  if (productCookie !== 'freepik') {
+    return next();
+  }
+
+  // List of Freepik internal paths that should be served DIRECTLY
+  const freepikInternalPaths = [
+    '/pikaso', '/wepik', '/slidesgo', '/ai',
+    '/profile', '/collections', '/projects',
+    '/pricing', '/popular', '/search', '/photos',
+    '/vectors', '/icons', '/psd', '/mockups'
+  ];
+
+  // Check if this is a Freepik internal path
+  const isInternalPath = freepikInternalPaths.some(path =>
+    req.url === path || req.url.startsWith(path + '/') ||
+    req.url.startsWith(path + '?') || req.url.startsWith(path + '#')
+  );
+
+  if (isInternalPath) {
+    // ✅ CRITICAL: Add /freepik for routing BUT flag it for removal before Puppeteer
+    console.log(`🎨 [FREEPIK DIRECT] Flagging ${req.url} to be served without /freepik prefix`);
+    req._freepikDirectPath = true; // Flag for Puppeteer handler
+    req._freepikOriginalPath = req.url; // Save original path
+    req.url = `/freepik${req.url}`; // Add prefix for routing
+  }
+
+  next();
+});
 // ============================================
 // ✅ FIXED AUTO-ROUTER - NO MORE DOUBLE PREFIXING!
 // ============================================
@@ -598,15 +648,25 @@ router.use((req, res, next) => {
     return next();
   }
 
-  const referer = req.headers.referer || '';
+  // ✅ Skip auto-routing for Storyblocks WordPress asset paths
   const productCookie = req.cookies.product || '';
+  if (productCookie === 'storyblocks') {
+    // WordPress assets should NOT get auto-prefixed
+    const wordpressPaths = ['/wp-content/', '/wp-includes/', '/uploads/'];
+    if (wordpressPaths.some(path => req.url.includes(path))) {
+      console.log(`⚠️ [AUTO-ROUTER] Skipping WordPress asset:`, req.url);
+      return next();  // Don't add /storyblocks/ prefix
+    }
+  }
+
+  const referer = req.headers.referer || '';
   const hasProductInReferer = productPrefixes.some(prefix => referer.includes(prefix));
 
   if (hasProductInReferer && productCookie !== 'freepik') {
     // Referer already has product context - don't add prefix (except for Freepik)
     return next();
   }
-  // Now add prefix based on cookie/referer (only if URL doesn't have it yet)
+
   // Now add prefix based on cookie/referer (only if URL doesn't have it yet)
   if (referer.includes('/epidemicsound') || productCookie === 'epidemicsound') {
     console.log(`🔀 [AUTO-ROUTER] ${req.url} → /epidemicsound${req.url}`);
@@ -617,14 +677,30 @@ router.use((req, res, next) => {
     req.url = `/envato${req.url}`;
   }
   else if (referer.includes('/freepik') || productCookie === 'freepik') {
-    console.log(`🔀 [AUTO-ROUTER] ${req.url} → /freepik${req.url}`);
-    req.url = `/freepik${req.url}`;
+    // ✅ List of Freepik internal paths that should NOT be prefixed
+    const freepikInternalPaths = [
+      '/pikaso', '/wepik', '/slidesgo', '/ai',
+      '/profile', '/collections', '/projects',
+      '/pricing', '/popular', '/search'
+    ];
+
+    // Check if this is a Freepik internal path
+    const isInternalPath = freepikInternalPaths.some(path =>
+      req.url === path || req.url.startsWith(path + '/') || req.url.startsWith(path + '?') || req.url.startsWith(path + '#')
+    );
+
+    if (isInternalPath) {
+      console.log(`🎨 [AUTO-ROUTER] Freepik internal path detected, NOT adding prefix:`, req.url);
+      // Don't add /freepik prefix - these are handled by Freepik's own routing
+    } else {
+      console.log(`🔀 [AUTO-ROUTER] ${req.url} → /freepik${req.url}`);
+      req.url = `/freepik${req.url}`;
+    }
   }
   else if (referer.includes('/stealthwriter') || productCookie === 'stealthwriter') {
     console.log(`🔀 [AUTO-ROUTER] ${req.url} → /stealthwriter${req.url}`);
     req.url = `/stealthwriter${req.url}`;
   }
-  // ✅ ADD ICONSCOUT HERE - JUST LIKE EPIDEMIC SOUND
   else if (referer.includes('/iconscout') || productCookie === 'iconscout') {
     console.log(`🔀 [AUTO-ROUTER] ${req.url} → /iconscout${req.url}`);
     req.url = `/iconscout${req.url}`;
@@ -633,7 +709,10 @@ router.use((req, res, next) => {
     console.log(`🔀 [AUTO-ROUTER] ${req.url} → /vecteezy${req.url}`);
     req.url = `/vecteezy${req.url}`;
   }
-
+  else if (referer.includes('/storyblocks') || productCookie === 'storyblocks') {
+    console.log(`🔀 [AUTO-ROUTER] ${req.url} → /storyblocks${req.url}`);
+    req.url = `/storyblocks${req.url}`;
+  }
   else if (referer.includes('/turndetect') || productCookie === 'turndetect') {
     console.log(`🔀 [AUTO-ROUTER] ${req.url} → /turndetect${req.url}`);
     req.url = `/turndetect${req.url}`;
@@ -642,23 +721,23 @@ router.use((req, res, next) => {
   next();
 });
 
-router.use((req, res, next) => {
-  // Only handle Freepik if cookie is set
-  if (req.cookies.product === 'freepik') {
-    // Check if it's a Freepik internal path
-    const freepikPaths = ['/pikaso', '/ai', '/wepik', '/slidesgo', '/'];
-    const isFreepikPath = freepikPaths.some(path =>
-      req.url === path || req.url.startsWith(path + '/')
-    );
+// router.use((req, res, next) => {
+//   // Only handle Freepik if cookie is set
+//   if (req.cookies.product === 'freepik') {
+//     // Check if it's a Freepik internal path
+//     const freepikPaths = ['/pikaso', '/ai', '/wepik', '/slidesgo', '/'];
+//     const isFreepikPath = freepikPaths.some(path =>
+//       req.url === path || req.url.startsWith(path + '/')
+//     );
 
-    if (isFreepikPath) {
-      console.log(`🎨 [FREEPIK ROOT] Handling:`, req.url);
-      // Rewrite to /freepik for the router
-      req.url = `/freepik${req.url}`;
-    }
-  }
-  next();
-});
+//     if (isFreepikPath) {
+//       console.log(`🎨 [FREEPIK ROOT] Handling:`, req.url);
+//       // Rewrite to /freepik for the router
+//       req.url = `/freepik${req.url}`;
+//     }
+//   }
+//   next();
+// });
 
 // ============================================
 // PRODUCT ROUTES (MUST BE LAST!)

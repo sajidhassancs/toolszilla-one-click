@@ -1,27 +1,15 @@
-/**
- * Storyblocks Product Configuration
- */
 export default {
-  // Basic Info
   name: 'storyblocks',
   displayName: 'Storyblocks',
-
-  // Target Website
   domain: 'www.storyblocks.com',
-
-  // Redirect path after login
   redirectPath: '/',
-
-  // Banned paths (product-specific, env vars will also apply)
-  bannedPaths: [],  // ✅ Empty - we're using BANNED_URL_PATHS from .env
-
-  // Proxy port (if running standalone)
+  bannedPaths: [],
   proxyPort: 8224,
-
-  // Use external proxy server
   useExternalProxy: false,
 
-  // Domain replacement rules [find, replace]
+  // ✅ ADD THIS - Don't rewrite API paths
+  skipRewritePaths: ['/api/', '/member/', '/account/', '/user/', '/search/'],
+
   replaceRules: [
     ['static.storyblocks.com', 'dev-server.primewp.net/storyblocks/static'],
     ['cdn.storyblocks.com', 'dev-server.primewp.net/storyblocks/cdn'],
@@ -30,7 +18,6 @@ export default {
     ['media.storyblocks.com', 'dev-server.primewp.net/storyblocks/media']
   ],
 
-  // Custom headers for requests
   customHeaders: {
     'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
     'accept-language': 'en-US,en;q=0.9',
@@ -46,6 +33,5 @@ export default {
     'accept-encoding': 'gzip, deflate, br'
   },
 
-  // Custom cookies (if any static cookies needed)
   customCookies: {}
 };

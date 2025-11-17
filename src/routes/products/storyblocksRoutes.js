@@ -5,7 +5,7 @@
 import express from 'express';
 import storyblocksConfig from '../../../products/storyblocks.js';
 import { showLimitReachedPage } from '../../controllers/downloadController.js';
-import { 
+import {
   proxyStoryblocksWithPuppeteer,
   proxyStoryblocksStatic,
   proxyStoryblocksCDN,
@@ -13,8 +13,6 @@ import {
   proxyStoryblocksImages,
   proxyStoryblocksMedia
 } from './handlers/storyblockHandlers.js';
-import { proxyAssetWithPuppeteer } from './handlers/puppeteerProxy.js';
-
 const router = express.Router();
 
 console.log('🟦 [STORYBLOCKS] Router initialized');
@@ -24,50 +22,47 @@ router.get('/limit-reached', (req, res) => {
   return showLimitReachedPage(req, res, storyblocksConfig.displayName, 'default');
 });
 
-// Asset routes (BEFORE catch-all!)
-// Static files
-router.use('/static', (req, res) => {
-  return proxyStoryblocksStatic(req, res);
-});
+// CDN ASSET ROUTES (These can use Axios - no auth needed)
+router.use('/static', proxyStoryblocksStatic);
+router.use('/cdn', proxyStoryblocksCDN);
+router.use('/content', proxyStoryblocksContent);
+router.use('/images', proxyStoryblocksImages);
+router.use('/media', proxyStoryblocksMedia);
 
-// CDN files
-router.use('/cdn', (req, res) => {
-  return proxyStoryblocksCDN(req, res);
-});
 
-// Content files
-router.use('/content', (req, res) => {
-  return proxyStoryblocksContent(req, res);
-});
+router.get(/^\/breadcrumbs\/(.*)$/, async (req, res) => {
+  try {
+    const assetPath = '/' + req.params[0];
+    const targetUrl = `https://breadcrumbs.storyblocks.com${assetPath}`;
 
-// Images
-router.use('/images', (req, res) => {
-  return proxyStoryblocksImages(req, res);
-});
+    console.log('🎨 Proxying breadcrumbs asset:', targetUrl);
 
-// Media (videos/audio)
-router.use('/media', (req, res) => {
-  return proxyStoryblocksMedia(req, res);
-});
+    const response = await axios.get(targetUrl, {
+      responseType: 'arraybuffer',
+      headers: {
+        'User-Agent': 'Mozilla/5.0',
+        'Accept': '*/*',
+        'Referer': 'https://www.storyblocks.com/'
+      },
+      validateStatus: () => true
+    });
 
-// CSS files
-router.use('/css', (req, res) => {
-  return proxyAssetWithPuppeteer(req, res, storyblocksConfig, 'www.storyblocks.com');
-});
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Cache-Control', 'public, max-age=31536000');
 
-// JavaScript files
-router.use('/js', (req, res) => {
-  return proxyAssetWithPuppeteer(req, res, storyblocksConfig, 'www.storyblocks.com');
-});
+    if (response.headers['content-type']) {
+      res.set('Content-Type', response.headers['content-type']);
+    }
 
-// Font files
-router.use('/fonts', (req, res) => {
-  return proxyAssetWithPuppeteer(req, res, storyblocksConfig, 'www.storyblocks.com');
+    return res.status(response.status).send(response.data);
+  } catch (error) {
+    console.error('❌ Error proxying breadcrumbs:', error.message);
+    return res.status(500).send('Failed to proxy asset');
+  }
 });
-
-// Catch-all proxy for ALL other requests (browsing pages)
-// This handles everything: /, /video, /audio, /search, etc.
-// MUST BE LAST!
+// EVERYTHING ELSE uses Puppeteer
+// This includes: /, /api, /resources, /wp-content, /wp-includes, /css, /js, /fonts
+// Storyblocks has CloudFlare protection - must use Puppeteer for all authenticated requests
 router.use((req, res) => {
   return proxyStoryblocksWithPuppeteer(req, res);
 });

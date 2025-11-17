@@ -2,7 +2,7 @@
  * Freepik Specific Handlers
  * Handles request proxying for Freepik
  */
- 
+
 import freepikConfig from '../../../../products/freepik.js';
 import axios from 'axios';
 import { decryptUserCookies } from '../../../services/cookieService.js';
@@ -18,17 +18,16 @@ import { getBrowser } from '../../../services/browserService.js';
 export async function proxyFreepikWithPuppeteer(req, res) {
   return await proxyWithPuppeteer(req, res, freepikConfig);
 }
-
 /**
- * Proxy Freepik static assets
+ * Proxy static.cdnpk.net assets
  */
-export async function proxyFreepikStatic(req, res) {
+export async function proxyFreepikStaticCDNPK(req, res) {
   try {
-    const assetPath = req.path.replace('/static', '');
-    const targetUrl = `https://static.freepik.com${assetPath}`;
-    
-    console.log('🎨 Proxying Freepik static asset:', targetUrl);
-    
+    const assetPath = req.path.replace('/static-cdnpk', '');
+    const targetUrl = `https://static.cdnpk.net${assetPath}`;
+
+    console.log('🎨 Proxying static.cdnpk.net asset:', targetUrl);
+
     const response = await axios.get(targetUrl, {
       responseType: 'arraybuffer',
       headers: {
@@ -38,14 +37,93 @@ export async function proxyFreepikStatic(req, res) {
       },
       validateStatus: () => true
     });
-    
+
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Cache-Control', 'public, max-age=31536000');
-    
+
+    const contentType = response.headers['content-type'] || '';
+    if (contentType) {
+      res.set('Content-Type', contentType);
+    }
+
+    // ✅ REWRITE URLs IN JAVASCRIPT FILES
+    if (contentType.includes('javascript') || contentType.includes('application/javascript') || assetPath.endsWith('.js')) {
+      let jsContent = response.data.toString('utf-8');
+
+      // Get current host
+      const isLocalhost = req.get('host').includes('localhost') || req.get('host').includes('127.0.0.1');
+      const protocol = isLocalhost ? 'http' : 'https';
+      const currentHost = req.get('host');
+      const proxyBase = `${protocol}://${currentHost}/freepik`;
+
+      console.log('   🔧 Rewriting JavaScript URLs...');
+      console.log('   📍 Current host:', currentHost);
+      console.log('   📍 Proxy base:', proxyBase);
+
+      // ✅ Replace ALL variations of www.freepik.com
+      jsContent = jsContent.replace(/https:\/\/www\.freepik\.com\/pikaso\//g, `${proxyBase}/pikaso/`);
+      jsContent = jsContent.replace(/https:\/\/www\.freepik\.com\//g, `${proxyBase}/`);
+      jsContent = jsContent.replace(/https:\/\/www\.freepik\.com"/g, `${proxyBase}"`);
+      jsContent = jsContent.replace(/"https:\/\/www\.freepik\.com/g, `"${proxyBase}`);
+      jsContent = jsContent.replace(/'https:\/\/www\.freepik\.com'/g, `'${proxyBase}'`);
+
+      // ✅ Replace domain-only references (for things like VITE_APP_DOMAIN)
+      jsContent = jsContent.replace(/"www\.freepik\.com"/g, `"${currentHost}"`);
+      jsContent = jsContent.replace(/'www\.freepik\.com'/g, `'${currentHost}'`);
+      jsContent = jsContent.replace(/VITE_APP_DOMAIN:"www\.freepik\.com"/g, `VITE_APP_DOMAIN:"${currentHost}"`);
+      jsContent = jsContent.replace(/APP_DOMAIN:"www\.freepik\.com"/g, `APP_DOMAIN:"${currentHost}"`);
+
+      // ✅ Replace static.cdnpk.net references
+      jsContent = jsContent.replace(/https:\/\/static\.cdnpk\.net\/pikaso\//g, `${proxyBase}/static-cdnpk/pikaso/`);
+      jsContent = jsContent.replace(/https:\/\/static\.cdnpk\.net\//g, `${proxyBase}/static-cdnpk/`);
+      jsContent = jsContent.replace(/BASE_URL:"https:\/\/static\.cdnpk\.net\/pikaso\/"/g, `BASE_URL:"${proxyBase}/static-cdnpk/pikaso/"`);
+
+      // ✅ Replace freepik.com without subdomain
+      jsContent = jsContent.replace(/VITE_REVERB_HOST:"freepik\.com"/g, `VITE_REVERB_HOST:"${currentHost}"`);
+      jsContent = jsContent.replace(/"freepik\.com"/g, `"${currentHost}"`);
+      jsContent = jsContent.replace(/'freepik\.com'/g, `'${currentHost}'`);
+
+      const originalLength = response.data.length;
+      const newLength = jsContent.length;
+      console.log(`   ✅ JavaScript rewritten (${originalLength} → ${newLength} bytes)`);
+
+      return res.status(response.status).send(jsContent);
+    }
+
+    // Binary files (images, fonts, etc.) - send as-is
+    return res.status(response.status).send(response.data);
+  } catch (error) {
+    console.error('❌ Error proxying static.cdnpk.net:', error.message);
+    return res.status(500).json({ error: 'Failed to proxy static cdnpk asset' });
+  }
+}
+/**
+ * Proxy Freepik static assets
+ */
+export async function proxyFreepikStatic(req, res) {
+  try {
+    const assetPath = req.path.replace('/static', '');
+    const targetUrl = `https://static.freepik.com${assetPath}`;
+
+    console.log('🎨 Proxying Freepik static asset:', targetUrl);
+
+    const response = await axios.get(targetUrl, {
+      responseType: 'arraybuffer',
+      headers: {
+        'User-Agent': USER_AGENT,
+        'Accept': req.headers.accept || '*/*',
+        'Referer': 'https://www.freepik.com/'
+      },
+      validateStatus: () => true
+    });
+
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Cache-Control', 'public, max-age=31536000');
+
     if (response.headers['content-type']) {
       res.set('Content-Type', response.headers['content-type']);
     }
-    
+
     return res.status(response.status).send(response.data);
   } catch (error) {
     console.error('❌ Error proxying Freepik static:', error.message);
@@ -60,9 +138,9 @@ export async function proxyFreepikCDN(req, res) {
   try {
     const assetPath = req.path.replace('/cdn', '');
     const targetUrl = `https://cdn.freepik.com${assetPath}`;
-    
+
     console.log('🎨 Proxying Freepik CDN asset:', targetUrl);
-    
+
     const response = await axios.get(targetUrl, {
       responseType: 'arraybuffer',
       headers: {
@@ -72,14 +150,14 @@ export async function proxyFreepikCDN(req, res) {
       },
       validateStatus: () => true
     });
-    
+
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Cache-Control', 'public, max-age=31536000');
-    
+
     if (response.headers['content-type']) {
       res.set('Content-Type', response.headers['content-type']);
     }
-    
+
     return res.status(response.status).send(response.data);
   } catch (error) {
     console.error('❌ Error proxying Freepik CDN:', error.message);
@@ -94,9 +172,9 @@ export async function proxyFreepikCDNB(req, res) {
   try {
     const assetPath = req.path.replace('/cdnb', '');
     const targetUrl = `https://cdnb.freepik.com${assetPath}`;
-    
+
     console.log('🎨 Proxying Freepik CDNB asset:', targetUrl);
-    
+
     const response = await axios.get(targetUrl, {
       responseType: 'arraybuffer',
       headers: {
@@ -106,14 +184,14 @@ export async function proxyFreepikCDNB(req, res) {
       },
       validateStatus: () => true
     });
-    
+
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Cache-Control', 'public, max-age=31536000');
-    
+
     if (response.headers['content-type']) {
       res.set('Content-Type', response.headers['content-type']);
     }
-    
+
     return res.status(response.status).send(response.data);
   } catch (error) {
     console.error('❌ Error proxying Freepik CDNB:', error.message);
@@ -127,7 +205,7 @@ export async function proxyFreepikCDNB(req, res) {
 export async function proxyFreepikImg(req, res) {
   try {
     const userData = await decryptUserCookies(req);
-    
+
     if (userData.redirect) {
       return res.redirect(userData.redirect);
     }
@@ -135,7 +213,7 @@ export async function proxyFreepikImg(req, res) {
     const prefix = userData.prefix;
     const apiData = await getDataFromApiWithoutVerify(prefix);
     let cookiesArray = apiData.access_configuration_preferences[0].accounts[0];
-    
+
     if (typeof cookiesArray === 'string') {
       try {
         cookiesArray = JSON.parse(cookiesArray);
@@ -144,7 +222,7 @@ export async function proxyFreepikImg(req, res) {
         return res.status(500).json({ error: 'Invalid cookie format' });
       }
     }
-    
+
     let cookieString;
     if (Array.isArray(cookiesArray)) {
       cookieString = cookiesArray
@@ -156,9 +234,9 @@ export async function proxyFreepikImg(req, res) {
 
     const imagePath = req.path.replace('/img', '');
     const targetUrl = `https://img.freepik.com${imagePath}`;
-    
+
     console.log('🖼️  Proxying Freepik image:', targetUrl);
-    
+
     const response = await axios.get(targetUrl, {
       responseType: 'arraybuffer',
       headers: {
@@ -170,14 +248,14 @@ export async function proxyFreepikImg(req, res) {
       validateStatus: () => true,
       timeout: 10000
     });
-    
+
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Cache-Control', 'public, max-age=31536000');
-    
+
     if (response.headers['content-type']) {
       res.set('Content-Type', response.headers['content-type']);
     }
-    
+
     return res.status(response.status).send(response.data);
   } catch (error) {
     console.error('❌ Error proxying Freepik image:', error.message);
@@ -191,7 +269,7 @@ export async function proxyFreepikImg(req, res) {
 export async function proxyFreepikImage(req, res) {
   try {
     const userData = await decryptUserCookies(req);
-    
+
     if (userData.redirect) {
       return res.redirect(userData.redirect);
     }
@@ -199,7 +277,7 @@ export async function proxyFreepikImage(req, res) {
     const prefix = userData.prefix;
     const apiData = await getDataFromApiWithoutVerify(prefix);
     let cookiesArray = apiData.access_configuration_preferences[0].accounts[0];
-    
+
     if (typeof cookiesArray === 'string') {
       try {
         cookiesArray = JSON.parse(cookiesArray);
@@ -208,7 +286,7 @@ export async function proxyFreepikImage(req, res) {
         return res.status(500).json({ error: 'Invalid cookie format' });
       }
     }
-    
+
     let cookieString;
     if (Array.isArray(cookiesArray)) {
       cookieString = cookiesArray
@@ -220,9 +298,9 @@ export async function proxyFreepikImage(req, res) {
 
     const imagePath = req.path.replace('/image', '');
     const targetUrl = `https://image.freepik.com${imagePath}`;
-    
+
     console.log('🖼️  Proxying Freepik image:', targetUrl);
-    
+
     const response = await axios.get(targetUrl, {
       responseType: 'arraybuffer',
       headers: {
@@ -234,14 +312,14 @@ export async function proxyFreepikImage(req, res) {
       validateStatus: () => true,
       timeout: 10000
     });
-    
+
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Cache-Control', 'public, max-age=31536000');
-    
+
     if (response.headers['content-type']) {
       res.set('Content-Type', response.headers['content-type']);
     }
-    
+
     return res.status(response.status).send(response.data);
   } catch (error) {
     console.error('❌ Error proxying Freepik image:', error.message);
@@ -256,9 +334,9 @@ export async function proxyFreepikAssets(req, res) {
   try {
     const assetPath = req.path.replace('/assets', '');
     const targetUrl = `https://assets.freepik.com${assetPath}`;
-    
+
     console.log('🎨 Proxying Freepik assets:', targetUrl);
-    
+
     const response = await axios.get(targetUrl, {
       responseType: 'arraybuffer',
       headers: {
@@ -268,14 +346,14 @@ export async function proxyFreepikAssets(req, res) {
       },
       validateStatus: () => true
     });
-    
+
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Cache-Control', 'public, max-age=31536000');
-    
+
     if (response.headers['content-type']) {
       res.set('Content-Type', response.headers['content-type']);
     }
-    
+
     return res.status(response.status).send(response.data);
   } catch (error) {
     console.error('❌ Error proxying Freepik assets:', error.message);
@@ -290,9 +368,9 @@ export async function proxyFreepikFPS(req, res) {
   try {
     const assetPath = req.path.replace('/fps', '');
     const targetUrl = `https://fps.cdnpk.net${assetPath}`;
-    
+
     console.log('🎨 Proxying Freepik FPS:', targetUrl);
-    
+
     const response = await axios.get(targetUrl, {
       responseType: 'arraybuffer',
       headers: {
@@ -302,14 +380,14 @@ export async function proxyFreepikFPS(req, res) {
       },
       validateStatus: () => true
     });
-    
+
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Cache-Control', 'public, max-age=31536000');
-    
+
     if (response.headers['content-type']) {
       res.set('Content-Type', response.headers['content-type']);
     }
-    
+
     return res.status(response.status).send(response.data);
   } catch (error) {
     console.error('❌ Error proxying Freepik FPS:', error.message);
@@ -317,7 +395,7 @@ export async function proxyFreepikFPS(req, res) {
   }
 
 
-  
+
 }
 
 
@@ -327,10 +405,10 @@ export async function proxyFreepikFPS(req, res) {
  */
 export async function proxyFreepikAPI(req, res) {
   let browser = null;
-  
+
   try {
     const userData = await decryptUserCookies(req);
-    
+
     if (userData.redirect) {
       return res.status(403).json({ error: 'Unauthorized' });
     }
@@ -338,7 +416,7 @@ export async function proxyFreepikAPI(req, res) {
     const prefix = userData.prefix;
     const apiData = await getDataFromApiWithoutVerify(prefix);
     let cookiesArray = apiData.access_configuration_preferences[0].accounts[0];
-    
+
     if (typeof cookiesArray === 'string') {
       try {
         cookiesArray = JSON.parse(cookiesArray);
@@ -347,7 +425,7 @@ export async function proxyFreepikAPI(req, res) {
         return res.status(500).json({ error: 'Invalid cookie format' });
       }
     }
-    
+
     if (!Array.isArray(cookiesArray) || cookiesArray.length === 0) {
       return res.status(500).json({ error: 'Invalid cookie format' });
     }
@@ -355,73 +433,95 @@ export async function proxyFreepikAPI(req, res) {
     // Remove /freepik prefix from the URL
     const apiPath = req.originalUrl.replace('/freepik', '');
     const targetUrl = `https://www.freepik.com${apiPath}`;
-    
+
     console.log('🔌 Proxying Freepik API with Puppeteer:', targetUrl);
-    
+
     // Use Puppeteer to bypass CloudFlare
     browser = await getBrowser();
     const page = await browser.newPage();
-    
+
     // Set stealth mode
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-    
-    // Set cookies
-    const puppeteerCookies = cookiesArray.map(cookie => ({
-      name: cookie.name,
-      value: cookie.value,
-      domain: cookie.domain || '.freepik.com',
-      path: cookie.path || '/',
-      expires: cookie.expirationDate || -1,
-      httpOnly: cookie.httpOnly || false,
-      secure: cookie.secure || false,
-      sameSite: cookie.sameSite || 'Lax'
-    }));
-    
+
+    // ✅ Set cookies with BOTH domain variants
+    const puppeteerCookies = [];
+    cookiesArray.forEach(cookie => {
+      // .freepik.com domain
+      puppeteerCookies.push({
+        name: cookie.name,
+        value: cookie.value,
+        domain: '.freepik.com',
+        path: '/',
+        expires: cookie.expirationDate || -1,
+        httpOnly: cookie.httpOnly || false,
+        secure: cookie.secure || true,
+        sameSite: 'Lax'
+      });
+
+      // www.freepik.com domain
+      puppeteerCookies.push({
+        name: cookie.name,
+        value: cookie.value,
+        domain: 'www.freepik.com',
+        path: '/',
+        expires: cookie.expirationDate || -1,
+        httpOnly: cookie.httpOnly || false,
+        secure: cookie.secure || true,
+        sameSite: 'Lax'
+      });
+    });
+
     await page.setCookie(...puppeteerCookies);
-    
+    console.log('✅ Set', puppeteerCookies.length, 'cookies for API call');
+
     // Fetch API
     const response = await page.goto(targetUrl, {
       waitUntil: 'domcontentloaded',
       timeout: 10000
     });
-    
+
     if (!response) {
       await page.close();
       return res.status(500).json({ error: 'API request failed' });
     }
-    
-   const content = await response.text();
-console.log('📦 API Response body:', content.substring(0, 200));
-const contentType = response.headers()['content-type'] || 'application/json';
 
-// ✅ FORWARD COOKIES TO BROWSER
-const responseCookies = await page.cookies();
-if (responseCookies.length > 0) {
-  console.log('🍪 Setting', responseCookies.length, 'cookies in user browser');
-  responseCookies.forEach(cookie => {
-    res.cookie(cookie.name, cookie.value, {
-      domain: '.primewp.net',  // ✅ Change domain to our proxy domain
-      path: cookie.path || '/',
-      httpOnly: false,  // ✅ Allow JavaScript to read it
-      secure: true,
-      sameSite: 'none',
-      maxAge: 3600000
-    });
-  });
-}
+    const content = await response.text();
+    const contentType = response.headers()['content-type'] || 'application/json';
 
-await page.close();
-    
+    // ✅ FORWARD COOKIES TO BROWSER
+    const responseCookies = await page.cookies();
+    if (responseCookies.length > 0) {
+      console.log('🍪 Setting', responseCookies.length, 'cookies in user browser');
+      responseCookies.forEach(cookie => {
+        res.cookie(cookie.name, cookie.value, {
+          domain: '.primewp.net',
+          path: cookie.path || '/',
+          httpOnly: false,
+          secure: true,
+          sameSite: 'none',
+          maxAge: 3600000
+        });
+      });
+    }
+
+    await page.close();
+
     console.log('✅ API response status:', response.status());
-    
+
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Content-Type', contentType);
-    
+
     return res.status(response.status()).send(content);
-    
+
   } catch (error) {
     console.error('❌ Error proxying Freepik API:', error.message);
-    return res.status(500).json({ error: 'API proxy error' });
+    if (browser) {
+      try {
+        const pages = await browser.pages();
+        await Promise.all(pages.map(page => page.close().catch(() => { })));
+      } catch (e) { }
+    }
+    return res.status(500).json({ error: 'API proxy error', message: error.message });
   }
 }
 /**
@@ -430,9 +530,9 @@ await page.close();
 export async function proxyFreepikManifest(req, res) {
   try {
     const targetUrl = 'https://www.freepik.com/manifest.json';
-    
+
     console.log('📄 Proxying Freepik manifest:', targetUrl);
-    
+
     const response = await axios.get(targetUrl, {
       headers: {
         'User-Agent': USER_AGENT,
@@ -442,12 +542,12 @@ export async function proxyFreepikManifest(req, res) {
       validateStatus: () => true,
       timeout: 5000
     });
-    
+
     console.log('✅ Manifest response status:', response.status);
-    
+
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Content-Type', 'application/json');
-    
+
     return res.status(response.status).send(response.data);
   } catch (error) {
     console.error('❌ Error proxying manifest:', error.message);

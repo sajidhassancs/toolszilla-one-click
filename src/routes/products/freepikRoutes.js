@@ -5,7 +5,7 @@
 import express from 'express';
 import freepikConfig from '../../../products/freepik.js';
 import { showLimitReachedPage } from '../../controllers/downloadController.js';
-import { 
+import {
   proxyFreepikWithPuppeteer,
   proxyFreepikAPI,
   proxyFreepikStatic,
@@ -15,7 +15,8 @@ import {
   proxyFreepikImg,
   proxyFreepikImage,
   proxyFreepikAssets,
-  proxyFreepikFPS
+  proxyFreepikFPS,
+  proxyFreepikStaticCDNPK
 } from './handlers/freepikHandlers.js';
 import { proxyAssetWithPuppeteer } from './handlers/puppeteerProxy.js';
 
@@ -39,6 +40,12 @@ router.use('/api', (req, res) => {
   console.log('🔌 [FREEPIK] API route hit:', req.originalUrl);
   return proxyFreepikAPI(req, res);
 });
+
+
+router.use('/static-cdnpk', (req, res) => {
+  return proxyFreepikStaticCDNPK(req, res);
+});
+
 
 // Manifest
 router.get('/manifest.json', (req, res) => {

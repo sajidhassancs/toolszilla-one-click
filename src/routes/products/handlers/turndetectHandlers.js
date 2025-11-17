@@ -14,7 +14,7 @@ import turndetectConfig from '../../../../products/turndetect.js';
 export async function getUserCookieString(req) {
   try {
     const userData = await decryptUserCookiesNoSessionCheck(req);
-    
+
     if (userData.redirect) {
       return null;
     }
@@ -22,140 +22,120 @@ export async function getUserCookieString(req) {
     const prefix = userData.prefix;
     const apiData = await getDataFromApiWithoutVerify(prefix);
     let cookiesArray = apiData.access_configuration_preferences[0].accounts[0];
-    
+
     if (typeof cookiesArray === 'string') {
       cookiesArray = JSON.parse(cookiesArray);
     }
-    
+
     if (!Array.isArray(cookiesArray)) {
       return null;
     }
-    
+
     // ✅ DEBUG: Log the cookies we're using
     console.log('🍪 [DEBUG] Cookies for TurnDetect:');
     cookiesArray.forEach(cookie => {
       console.log(`   - ${cookie.name}: ${cookie.value.substring(0, 50)}...`);
     });
-    
+
     return cookiesArray.map(cookie => `${cookie.name}=${cookie.value}`).join('; ');
   } catch (error) {
     console.error('❌ Cookie error:', error.message);
     return null;
   }
 }
-
-/**
- * Main TurnDetect proxy handler
- */
 export async function proxyTurnDetectWithAxios(req, res) {
   try {
+    console.log('\n========== TURNDETECT REQUEST ==========');
     console.log('🔍 [TURNDETECT] Proxy request:', req.method, req.originalUrl);
-    
-    // Get cookies
-    const cookieString = await getUserCookieString(req);
-    if (!cookieString) {
-      console.log('   ❌ No cookies - redirecting');
-      return res.redirect('/setup-session');
-    }
 
-    console.log('   🍪 Sending cookies:', cookieString.substring(0, 150) + '...');
-
-    // Clean path
+    // Clean path first
     let cleanPath = req.originalUrl.replace('/turndetect', '');
     if (!cleanPath || cleanPath === '') {
       cleanPath = '/dashboard';
     }
-    
+
+    // ✅ For public assets, don't require cookies
+    const publicPaths = ['/manifest.json', '/logo', '/favicon', '/static/', '.png', '.jpg', '.css', '.js', '.map'];
+    const isPublicAsset = publicPaths.some(p => cleanPath.includes(p));
+
+    // Get cookies
+    let cookieString = '';
+    if (!isPublicAsset) {
+      cookieString = await getUserCookieString(req);
+      if (!cookieString) {
+        console.log('   ❌ No cookies - redirecting');
+        return res.redirect('/setup-session');
+      }
+      console.log('   ✅ Got cookies');
+    } else {
+      console.log('   ⚠️ Public asset');
+      try {
+        cookieString = await getUserCookieString(req);
+      } catch (e) {
+        // Ignore
+      }
+    }
+
     const targetUrl = `https://turndetect.com${cleanPath}`;
-    console.log('   Target:', targetUrl);
-    
+    console.log('   🎯 Target:', targetUrl);
+
     // Make request
+    const headers = {
+      'accept': '*/*',
+      'accept-language': 'en-GB,en-US;q=0.9,en;q=0.8',
+      'referer': 'https://turndetect.com/',
+      'user-agent': USER_AGENT
+    };
+
+    if (cookieString) {
+      headers['Cookie'] = cookieString;
+    }
+
     const response = await axios({
       method: req.method,
       url: targetUrl,
-      headers: {
-        'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-        'accept-language': 'en-GB,en-US;q=0.9,en;q=0.8',
-        'referer': 'https://turndetect.com/',
-        'user-agent': USER_AGENT,
-        'Cookie': cookieString
-      },
+      headers: headers,
       data: req.body,
       responseType: 'arraybuffer',
       validateStatus: () => true,
       timeout: 15000
     });
-    
-    console.log('   Response:', response.status, response.headers['content-type']);
-    
-    const contentType = response.headers['content-type'] || 'application/octet-stream';
-    const currentHost = `${req.protocol}://${req.get('host')}`;
 
-    // Handle HTML
+    console.log('   ✅', response.status, response.headers['content-type']);
+
+    const contentType = response.headers['content-type'] || 'application/octet-stream';
+
+    // NO cache
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.set('Access-Control-Allow-Origin', '*');
+
+    // ✅ ONLY rewrite HTML tags, be VERY conservative
     if (contentType.includes('text/html')) {
       let html = response.data.toString('utf-8');
-      
-      console.log('🔧 Rewriting HTML URLs...');
-      
-      // Replace domain URLs
-      html = html.replace(/https:\/\/turndetect\.com/g, `${currentHost}/turndetect`);
-      html = html.replace(/\/\/turndetect\.com/g, `${currentHost}/turndetect`);
-      
-      // ✅ CRITICAL: Rewrite ALL anchor tags that go to root
-      html = html.replace(/href="\//g, 'href="/turndetect/');
-      html = html.replace(/href='\//g, "href='/turndetect/");
-      
-      // ✅ CRITICAL: Rewrite src attributes
-      html = html.replace(/src="\//g, 'src="/turndetect/');
-      html = html.replace(/src='\//g, "src='/turndetect/");
-      
-      // ✅ Rewrite srcset
-      html = html.replace(/srcset="\//g, 'srcset="/turndetect/');
-      html = html.replace(/srcset='\//g, "srcset='/turndetect/");
-      
-      // ✅ Fix action attributes (forms)
-      html = html.replace(/action="\//g, 'action="/turndetect/');
-      html = html.replace(/action='\//g, "action='/turndetect/");
-      
-      // ✅ Fix any double prefixes
+
+      // ONLY rewrite opening tags for href and src
+      // Use negative lookahead to avoid rewriting inside <script> tags
+      html = html.replace(/<link([^>]*?)href="\//g, '<link$1href="/turndetect/');
+      html = html.replace(/<a([^>]*?)href="\//g, '<a$1href="/turndetect/');
+      html = html.replace(/<img([^>]*?)src="\//g, '<img$1src="/turndetect/');
+      html = html.replace(/<script([^>]*?)src="\//g, '<script$1src="/turndetect/');
+
+      // Fix doubles
       html = html.replace(/\/turndetect\/turndetect\//g, '/turndetect/');
-      
-      console.log('   ✅ HTML rewriting complete');
-      
+
       res.set('Content-Type', 'text/html');
       return res.status(response.status).send(html);
     }
-    
-    // Handle JavaScript
-    if (contentType.includes('javascript')) {
-      let js = response.data.toString('utf-8');
-      
-      js = js.replace(/https:\/\/turndetect\.com/g, `${currentHost}/turndetect`);
-      js = js.replace(/["']\/(?!turndetect)/g, '"/turndetect/');
-      
-      res.set('Content-Type', contentType);
-      return res.status(response.status).send(js);
-    }
-    
-    // Handle CSS
-    if (contentType.includes('css')) {
-      let css = response.data.toString('utf-8');
-      
-      css = css.replace(/https:\/\/turndetect\.com/g, `${currentHost}/turndetect`);
-      css = css.replace(/url\(\/(?!turndetect)/g, 'url(/turndetect/');
-      
-      res.set('Content-Type', contentType);
-      return res.status(response.status).send(css);
-    }
-    
-    // Everything else (images, fonts, etc.)
+
+    // Everything else - pass through UNCHANGED
     if (response.headers['content-type']) {
       res.set('Content-Type', response.headers['content-type']);
     }
+
     return res.status(response.status).send(response.data);
-    
+
   } catch (error) {
-    console.error('❌ Proxy error:', error.message);
+    console.error('❌ Error:', error.message);
     return res.status(500).json({ error: error.message });
   }
 }
