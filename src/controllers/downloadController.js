@@ -17,33 +17,36 @@ const __dirname = path.dirname(__filename);
 export async function showLimitReachedPage(req, res, productName, plan = 'default') {
   try {
     const viewsPath = path.join(process.cwd(), 'src', 'views', 'limit_reached.html');
-    
+
     if (!fs.existsSync(viewsPath)) {
       console.error('❌ limit_reached.html not found at:', viewsPath);
       return res.status(429).send('Daily download limit reached. Please try again tomorrow.');
     }
-    
+
     // Read the HTML template
     let html = fs.readFileSync(viewsPath, 'utf-8');
-    
+
     // Get the limit for this plan
     const dailyLimit = DOWNLOAD_LIMITS[plan] || DOWNLOAD_LIMITS.default;
-    
+
     // Replace template variables
     html = html.replace(/\{\{daily_limit\}\}/g, dailyLimit);
     html = html.replace(/\{\{APP_NAME\}\}/g, 'ToolsZilla');
-    html = html.replace(/<title>Daily Usage Limit Reached - .*?<\/title>/g, 
+    html = html.replace(/<title>Daily Usage Limit Reached - .*?<\/title>/g,
       `<title>Daily Usage Limit Reached - ${productName}</title>`);
-    
+
     // Send the processed HTML
     return res.status(429).send(html);
-    
+
   } catch (error) {
     console.error('❌ Error showing limit reached page:', error.message);
     return res.status(429).send('Daily download limit reached. Please try again tomorrow.');
   }
 }
 
+/**
+ * Check if user can download
+ */
 /**
  * Check if user can download
  */
@@ -58,8 +61,9 @@ export async function checkDownloadPermission(req, toolName, userEmail, plan = '
     };
   } catch (error) {
     console.error('❌ Error checking download permission:', error.message);
+    // ✅ CHANGED: Return allowed: true (fail-open)
     return {
-      allowed: false,
+      allowed: true,  // ✅ Changed from false to true
       count: 0,
       limit: DOWNLOAD_LIMITS[plan] || DOWNLOAD_LIMITS.default,
       error: error.message

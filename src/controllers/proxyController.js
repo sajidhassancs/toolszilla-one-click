@@ -1,6 +1,5 @@
 /**
- * Proxy Controller - DEBUG VERSION
- * Main proxy logic for handling requests to target websites
+ * Proxy Controller - FIXED VERSION
  */
 import { decryptUserCookies, getPremiumCookies } from '../services/cookieService.js';
 import { makeProxyRequest, processProxyResponse } from '../services/proxyService.js';
@@ -15,21 +14,22 @@ export async function handleProxyRequest(req, res, productConfig) {
     console.log('============================================');
     console.log('🔵 NEW REQUEST:', req.method, req.originalUrl);
     console.log('   Host:', req.get('host'));
+    console.log('   Protocol:', req.protocol);
     console.log('   Product:', productConfig.name);
-    
+
     // Get the full request path
     const productPrefix = `/${productConfig.name}`;
     let requestPath = req.originalUrl;
-    
+
     console.log('   Original URL:', requestPath);
-    
+
     // Remove product prefix if present
     if (requestPath.startsWith(productPrefix)) {
       requestPath = requestPath.substring(productPrefix.length);
     }
-    
+
     console.log('   Clean path:', requestPath);
-    
+
     // Handle query strings
     const [pathOnly, queryString] = requestPath.split('?');
     const cleanPath = pathOnly || '/';
@@ -62,7 +62,7 @@ export async function handleProxyRequest(req, res, productConfig) {
 
     // Build upstream URL
     let upstreamUrl = `https://${productConfig.domain}${cleanPath}`;
-    
+
     // Add back query string if it exists
     if (queryString) {
       upstreamUrl += `?${queryString}`;
@@ -72,8 +72,8 @@ export async function handleProxyRequest(req, res, productConfig) {
 
     // Get premium cookies
     const { cookies, proxy } = await getPremiumCookies(
-      prefix, 
-      0, 
+      prefix,
+      0,
       productConfig.useExternalProxy || false
     );
 
@@ -84,11 +84,15 @@ export async function handleProxyRequest(req, res, productConfig) {
 
     // Check if this is a static file
     const isStaticFile = STATIC_FILE_EXTENSIONS.some(ext => lowerPath.endsWith(ext));
-    console.log('📦 Is static file?', isStaticFile, '| Extensions checked:', STATIC_FILE_EXTENSIONS.filter(ext => lowerPath.includes(ext)));
+    console.log('📦 Is static file?', isStaticFile);
+
+    // ✅ FIX: Use req.protocol instead of hardcoded http
+    const currentHost = `${req.protocol}://${req.get('host')}`;
+    console.log('🌐 Current host:', currentHost);
 
     if (isStaticFile) {
       console.log('📦 HANDLING STATIC FILE');
-      
+
       try {
         const response = await makeProxyRequest(
           upstreamUrl,
@@ -105,8 +109,6 @@ export async function handleProxyRequest(req, res, productConfig) {
         );
 
         console.log('✅ Static file response status:', response.status);
-        console.log('   Content-Type:', response.headers['content-type']);
-        console.log('   Data size:', response.data.length, 'bytes');
 
         if (response.status !== 200) {
           console.error('❌ Static file failed with status:', response.status);
@@ -114,50 +116,44 @@ export async function handleProxyRequest(req, res, productConfig) {
         }
 
         const contentType = response.headers['content-type'] || 'application/octet-stream';
-        
+
         // ✅ ADD CORS HEADERS
         res.setHeader('Access-Control-Allow-Origin', '*');
         res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
         res.setHeader('Access-Control-Allow-Headers', '*');
         res.setHeader('Cache-Control', 'public, max-age=31536000');
-        
+
         // For CSS/JS files, replace domains
         if (contentType.includes('text/css') || contentType.includes('javascript')) {
           console.log('🔧 Processing CSS/JS file, replacing domains...');
           let content = response.data.toString('utf-8');
-          
-          const originalLength = content.length;
-          
-          // Replace main domain references
+
+          // ✅ FIX: Use currentHost instead of http://
           content = content.replace(
-            new RegExp(`https?://${productConfig.domain.replace(/\./g, '\\.')}`, 'g'), 
-            `http://${req.get('host')}${productPrefix}`
+            new RegExp(`https?://${productConfig.domain.replace(/\./g, '\\.')}`, 'g'),
+            `${currentHost}${productPrefix}`
           );
           content = content.replace(
-            new RegExp(`//${productConfig.domain.replace(/\./g, '\\.')}`, 'g'), 
+            new RegExp(`//${productConfig.domain.replace(/\./g, '\\.')}`, 'g'),
             `//${req.get('host')}${productPrefix}`
           );
-          
-          console.log('   Replaced', originalLength - content.length, 'chars');
-          
+
           return res.status(200).type(contentType).send(Buffer.from(content, 'utf-8'));
         }
-        
+
         // For binary files (images, fonts, etc.), send as-is
         console.log('📤 Sending binary file as-is');
         return res.status(200).type(contentType).send(response.data);
-        
+
       } catch (error) {
-        console.error('❌ ERROR FETCHING STATIC FILE:');
-        console.error('   Message:', error.message);
-        console.error('   Stack:', error.stack);
+        console.error('❌ ERROR FETCHING STATIC FILE:', error.message);
         return res.status(500).send('Error loading resource');
       }
     }
 
     // Handle dynamic requests (HTML, API calls, etc.)
     console.log('🌐 HANDLING DYNAMIC REQUEST (HTML/API)');
-    
+
     const response = await makeProxyRequest(
       upstreamUrl,
       req.method,
@@ -177,67 +173,111 @@ export async function handleProxyRequest(req, res, productConfig) {
     // Handle redirects
     if (response.redirectLocation) {
       console.log('↪️  Redirect to:', response.redirectLocation);
-      
+
       let redirectUrl = response.redirectLocation;
       if (redirectUrl.includes(productConfig.domain)) {
         redirectUrl = redirectUrl.replace(`https://${productConfig.domain}`, productPrefix);
         redirectUrl = redirectUrl.replace(`http://${productConfig.domain}`, productPrefix);
       }
-      
+
       return res.redirect(redirectUrl);
     }
 
     const contentType = response.headers['content-type'] || 'application/octet-stream';
     console.log('   Content-Type:', contentType);
 
-    // Process response (apply domain replacements if text)
+    // ✅ FIX: Use currentHost instead of http://
     const processedData = processProxyResponse(
       response.data,
       lowerPath,
       contentType,
       productConfig.domain,
-      `http://${req.get('host')}${productPrefix}`,
+      `${currentHost}${productPrefix}`,
       productConfig.replaceRules || []
     );
 
-  // ✅ REWRITE ASSET URLs FOR PRODUCTS WITH assetDomains CONFIG
-if (productConfig.assetDomains && contentType.includes('text/html')) {
-  console.log('🔧 Rewriting asset URLs for', productConfig.name);
-  let htmlContent = processedData.toString('utf-8');
+    // ✅ REWRITE ASSET URLs FOR PRODUCTS WITH assetDomains CONFIG
+    if (productConfig.assetDomains && contentType.includes('text/html')) {
+      console.log('🔧 Rewriting asset URLs for', productConfig.name);
+      let htmlContent = processedData.toString('utf-8');
+
+      for (const assetDomain of productConfig.assetDomains) {
+        const fromDomain = assetDomain.from;
+        const toPath = assetDomain.to;
+
+        // ✅ SKIP IMAGE DOMAINS - let them load directly from CDN
+        if (fromDomain.includes('elements-resized') ||
+          fromDomain.includes('elements-assets') ||
+          fromDomain.includes('envatousercontent')) {
+          console.log(`   ⏭️  Skipping image domain: ${fromDomain}`);
+          continue;
+        }
+
+        // ✅ FIX: Use currentHost instead of http://
+        htmlContent = htmlContent.replace(
+          new RegExp(`https://${fromDomain.replace(/\./g, '\\.')}`, 'g'),
+          `${currentHost}${productPrefix}${toPath}`
+        );
+
+        console.log(`   ✅ Rewritten: ${fromDomain} → ${currentHost}${productPrefix}${toPath}`);
+      }
+
+      // ✅ INJECT DOWNLOAD INTERCEPTOR FOR ENVATO
+      if (productConfig.name === 'envato') {
+        console.log('🔧 Injecting Envato download interceptor');
+
+        const envatoDownloadJS = `
+<script>
+(function() {
+  console.log('🔧 Envato download interceptor loaded');
   
-  for (const assetDomain of productConfig.assetDomains) {
-    const fromDomain = assetDomain.from;
-    const toPath = assetDomain.to;
-    
-    // ✅ SKIP IMAGE DOMAINS - let them load directly from CDN
-    if (fromDomain.includes('elements-resized') || 
-        fromDomain.includes('elements-assets') || 
-        fromDomain.includes('envatousercontent')) {
-      console.log(`   ⏭️  Skipping image domain: ${fromDomain}`);
-      continue;
+  // Intercept XMLHttpRequest
+  const originalXHROpen = XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open = function(method, url, ...args) {
+    if (url && url.includes('/download_and_license')) {
+      console.log('🔧 Intercepting XHR download:', url);
+      if (!url.startsWith('/envato/')) {
+        url = '/envato' + url;
+      }
     }
-   
-    htmlContent = htmlContent.replace(
-      new RegExp(`https://${fromDomain.replace(/\./g, '\\.')}`, 'g'),
-      `http://${req.get('host')}${productPrefix}${toPath}`
-    );
-    
-    console.log(`   ✅ Rewritten: ${fromDomain} → ${productPrefix}${toPath}`);
-  }
+    return originalXHROpen.call(this, method, url, ...args);
+  };
   
-  return res.status(response.status).type(contentType).send(htmlContent);
-}
+  // Intercept fetch
+  const originalFetch = window.fetch;
+  window.fetch = function(url, options) {
+    if (typeof url === 'string' && url.includes('/download_and_license')) {
+      console.log('🔧 Intercepting fetch download:', url);
+      if (!url.startsWith('/envato/')) {
+        url = '/envato' + url;
+      }
+    }
+    return originalFetch.call(this, url, options);
+  };
+  
+  console.log('✅ Download interceptor active');
+})();
+</script>
+`;
+
+        // Inject before closing body tag
+        if (htmlContent.includes('</body>')) {
+          htmlContent = htmlContent.replace('</body>', envatoDownloadJS + '</body>');
+          console.log('   ✅ Injected download interceptor');
+        }
+      }
+
+      return res.status(response.status).type(contentType).send(htmlContent);
+    }
 
     console.log('✅ Sending processed response');
     return res.status(response.status).type(contentType).send(processedData);
 
   } catch (error) {
-    console.error('❌ PROXY ERROR:');
-    console.error('   Message:', error.message);
-    console.error('   Stack:', error.stack);
-    return res.status(500).json({ 
+    console.error('❌ PROXY ERROR:', error.message);
+    return res.status(500).json({
       error: 'Proxy request failed',
-      message: error.message 
+      message: error.message
     });
   }
 }
@@ -248,15 +288,15 @@ if (productConfig.assetDomains && contentType.includes('text/html')) {
 export async function handleMediaProxy(req, res, productConfig, mediaDomain) {
   try {
     console.log('🖼️  Media proxy request:', req.path);
-    
+
     const mediaPath = req.path.replace('/media', '');
     const upstreamUrl = `https://${mediaDomain}${mediaPath}`;
-    
+
     console.log('🎯 Proxying to:', upstreamUrl);
-    
+
     // Validate user session
     const userData = await decryptUserCookies(req);
-    
+
     if (userData.redirect) {
       console.log('⚠️  Session invalid for media request');
       return res.status(403).send('Access denied');
@@ -267,14 +307,14 @@ export async function handleMediaProxy(req, res, productConfig, mediaDomain) {
       console.log('❌ No prefix found for media request');
       return res.status(403).send('Access denied');
     }
-    
+
     // Get premium cookies
     const { cookies, proxy } = await getPremiumCookies(
-      prefix, 
-      0, 
+      prefix,
+      0,
       productConfig.useExternalProxy || false
     );
-    
+
     // Make request to media CDN
     const response = await makeProxyRequest(
       upstreamUrl,
@@ -288,33 +328,32 @@ export async function handleMediaProxy(req, res, productConfig, mediaDomain) {
       proxy,
       null
     );
-    
+
     console.log('✅ Media response status:', response.status);
-    
+
     if (response.status !== 200) {
       console.error('❌ Media proxy failed with status:', response.status);
       return res.status(response.status).send('Media not found');
     }
-    
+
     // Set CORS headers
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-    
+
     // Set content type
     const contentType = response.headers['content-type'];
     if (contentType) {
       res.setHeader('Content-Type', contentType);
     }
-    
+
     // Set cache headers
     res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-    
+
     console.log('✅ Sending media file');
     return res.status(200).send(response.data);
-    
+
   } catch (error) {
     console.error('❌ Media proxy error:', error.message);
-    console.error('Stack:', error.stack);
     return res.status(500).send('Media proxy error');
   }
 }

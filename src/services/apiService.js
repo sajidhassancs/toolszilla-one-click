@@ -13,7 +13,7 @@ export async function getDataFromApi(authToken, prefix) {
     console.log('📡 Calling API with verification:');
     console.log('   URL:', `${API_URL}/oneclick/access_and_verify/`);
     console.log('   Prefix:', prefix);
-    
+
     const response = await axios.post(
       `${API_URL}/oneclick/access_and_verify/`,
       null,
@@ -22,7 +22,7 @@ export async function getDataFromApi(authToken, prefix) {
         params: { prefix }
       }
     );
-     
+
     return response.data;
   } catch (error) {
     console.error('❌ Error getting data from API:', error.message);
@@ -42,14 +42,14 @@ export async function getDataFromApiWithoutVerify(prefix) {
     console.log('📡 Calling API without verification:');
     console.log('   URL:', `${API_URL}/oneclick/access_without_verify/${prefix}`);
     console.log('   API_KEY:', API_KEY ? 'Set' : 'Missing');
-    
+
     const response = await axios.get(
       `${API_URL}/oneclick/access_without_verify/${prefix}`,
       {
         headers: { Authorization: API_KEY }
-      } 
+      }
     );
- 
+
     return response.data;
   } catch (error) {
     console.error('❌ Error getting data from API without verify:', error.message);
@@ -66,6 +66,9 @@ export async function getDataFromApiWithoutVerify(prefix) {
  */
 export async function checkDownloadLimit(toolName, userEmail) {
   try {
+    console.log(`🔍 Checking download limit for: ${toolName} - ${userEmail}`);
+    console.log(`📡 Stats API URL: ${LIMIT_API_URL}/api/stats/today`);
+
     const response = await axios.get(
       `${LIMIT_API_URL}/api/stats/today`,
       {
@@ -73,12 +76,15 @@ export async function checkDownloadLimit(toolName, userEmail) {
         params: {
           tool_name: toolName,
           email: userEmail
-        }
+        },
+        timeout: 5000 // ✅ Add timeout
       }
     );
 
     const data = response.data;
     const downloadCount = parseInt(data.by_tool?.[0]?.count || 0, 10);
+
+    console.log(`✅ Current download count: ${downloadCount}`);
 
     return {
       success: true,
@@ -86,10 +92,13 @@ export async function checkDownloadLimit(toolName, userEmail) {
     };
   } catch (error) {
     console.error('❌ Error checking download limit:', error.message);
+    console.error('   LIMIT_API_URL:', LIMIT_API_URL);
+    console.error('   LIMIT_API_KEY:', LIMIT_API_KEY ? 'Set' : 'Missing');
+
+    // ✅ CRITICAL: Return success: true with count: 0 (fail-open)
     return {
-      success: false,
-      count: 0,
-      error: error.message
+      success: true, // ✅ Changed from false to true
+      count: 0       // ✅ Allow downloads if API fails
     };
   }
 }
@@ -99,6 +108,9 @@ export async function checkDownloadLimit(toolName, userEmail) {
  */
 export async function addDownloadRecord(toolName, userEmail, website, userIp, info = null) {
   try {
+    console.log(`📝 Recording download for: ${toolName} - ${userEmail}`);
+    console.log(`📡 Stats API URL: ${LIMIT_API_URL}/api/stats/today`);
+
     const payload = {
       tool_name: toolName,
       email: userEmail,
@@ -114,7 +126,8 @@ export async function addDownloadRecord(toolName, userEmail, website, userIp, in
       `${LIMIT_API_URL}/api/stats/today`,
       payload,
       {
-        headers: { 'X-API-Key': LIMIT_API_KEY }
+        headers: { 'X-API-Key': LIMIT_API_KEY },
+        timeout: 5000 // ✅ Add timeout
       }
     );
 
@@ -125,8 +138,12 @@ export async function addDownloadRecord(toolName, userEmail, website, userIp, in
     };
   } catch (error) {
     console.error('❌ Error adding download record:', error.message);
+    console.error('   LIMIT_API_URL:', LIMIT_API_URL);
+    console.error('   LIMIT_API_KEY:', LIMIT_API_KEY ? 'Set' : 'Missing');
+
+    // ✅ CRITICAL: Return success: true even if recording fails (don't block downloads)
     return {
-      success: false,
+      success: true, // ✅ Changed from false to true
       error: error.message
     };
   }

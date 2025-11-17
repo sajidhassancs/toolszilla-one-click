@@ -1,20 +1,35 @@
 /**
  * Envato Routes
  */
+import axios from 'axios';
 import express from 'express';
 import envatoConfig from '../../../products/envato.js';
 import { handleProxyRequest } from '../../controllers/proxyController.js';
 import { showLimitReachedPage } from '../../controllers/downloadController.js';
+// ❌ MISSING THESE IMPORTS AT THE TOP:
+import { decryptUserCookies } from '../../services/cookieService.js';
+import { getDataFromApiWithoutVerify } from '../../services/apiService.js';
 import {
   processEnvatoDownload,
   proxyEnvatoAssets,
   proxyEnvatoImages,
   proxyEnvatoAccount,
   proxyEnvatoApi,
-  proxyEnvatoWithPuppeteer  // ✅ ADD THIS
-} from './handlers/envatoHandlers.js';
 
+} from './handlers/envatoHandlers.js';
+import { USER_AGENT } from '../../utils/constants.js';
 const router = express.Router();
+
+
+function getCurrentRotationIndex(totalAccounts) {
+  const now = new Date();
+  const currentHour = now.getHours();
+  const currentMinute = now.getMinutes();
+  const totalMinutes = currentHour * 60 + currentMinute;
+  const intervalIndex = Math.floor(totalMinutes / 10);
+  return intervalIndex % totalAccounts;
+}
+
 
 // Logging middleware
 router.use((req, res, next) => {
@@ -47,16 +62,22 @@ router.get('/limit-reached', (req, res) => {
   return showLimitReachedPage(req, res, envatoConfig.displayName, 'default');
 });
 
-// Download endpoint
-router.post('/download_and_license.json', processEnvatoDownload);
+
 
 // Asset routes
 router.use('/assets', proxyEnvatoAssets);
 router.use('/images', proxyEnvatoImages);
 router.use('/account', proxyEnvatoAccount);
+
+// In envatoRoutes.js, ADD this BEFORE the /elements-api route:
+
+// ✅ Download endpoint - must be BEFORE /elements-api route
+router.post('/elements-api/items/:itemId/download_and_license.json', processEnvatoDownload);
+router.post('/download_and_license.json', processEnvatoDownload);
+
+// Then the API routes
 router.use('/data-api', (req, res) => proxyEnvatoApi(req, res, 'data-api'));
 router.use('/elements-api', (req, res) => proxyEnvatoApi(req, res, 'elements-api'));
-
 // Static JSON
 router.get('/user_collections.json', (req, res) => {
   return res.json({ data: [] });

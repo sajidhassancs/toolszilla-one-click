@@ -3,23 +3,11 @@
  * Handles CSRF token extraction, proxy rotation, and download tracking
  */
 import axios from 'axios';
-import { decryptUserCookies, getPremiumCookies } from '../../../services/cookieService.js';
+import { decryptUserCookies } from '../../../services/cookieService.js';
 import { checkDownloadPermission, recordDownloadAction } from '../../../controllers/downloadController.js';
 import { getDataFromApiWithoutVerify } from '../../../services/apiService.js';
-import { parseCookieString, cookiesToString } from '../../../utils/helpers.js';
 import { USER_AGENT } from '../../../utils/constants.js';
 import envatoConfig from '../../../../products/envato.js';
-// ✅ ADD THIS IMPORT
-import { proxyWithPuppeteer } from './puppeteerProxy.js';
-
-// ✅ ADD THIS NEW FUNCTION FOR PUPPETEER BROWSING
-/**
- * Main Envato proxy handler using Puppeteer (optional)
- * Only use this if Envato starts blocking the Axios proxy
- */
-export async function proxyEnvatoWithPuppeteer(req, res) {
-  return await proxyWithPuppeteer(req, res, envatoConfig);
-}
 
 /**
  * Extract CSRF tokens from Envato HTML page
@@ -29,6 +17,7 @@ function extractCsrfTokens(htmlContent) {
   const csrfTokenMatch = htmlContent.match(/"csrfToken":\s*"([^"]+)"/);
 
   if (!backendCsrfTokenMatch || !csrfTokenMatch) {
+    console.log('❌ CSRF tokens not found in HTML');
     return { backendCsrfToken: null, csrfToken: null };
   }
 
@@ -38,17 +27,6 @@ function extractCsrfTokens(htmlContent) {
   };
 }
 
-// ... rest of your existing functions stay the same ...
-// At the top with other functions
-function delay(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-// In proxyEnvatoAccount, before making the axios request:
-await delay(500); // 500ms delay
-
-// In proxyEnvatoApi, before making the axios request:
-await delay(500); // 500ms delay
 /**
  * Get current cookie/proxy index based on 10-minute rotation
  */
@@ -63,6 +41,7 @@ function getCurrentRotationIndex(totalAccounts) {
 
 /**
  * Process Envato download with CSRF tokens
+ * Based on working Python implementation
  */
 export async function processEnvatoDownload(req, res) {
   try {
@@ -84,18 +63,23 @@ export async function processEnvatoDownload(req, res) {
       return res.redirect('/expired');
     }
 
-    // Check download limit BEFORE processing
-    const limitCheck = await checkDownloadPermission(req, 'envato', userEmail, 'default');
+    // ✅ Check download limit with proper error handling
+    try {
+      const limitCheck = await checkDownloadPermission(req, 'envato', userEmail, 'default');
 
-    if (!limitCheck.allowed) {
-      console.log(`⚠️  Download limit reached: ${limitCheck.count}/${limitCheck.limit}`);
-      return res.redirect('/limit-reached');
+      if (!limitCheck.allowed) {
+        console.log(`⚠️  Download limit reached: ${limitCheck.count}/${limitCheck.limit}`);
+        return res.redirect('/envato/limit-reached');
+      }
+
+      console.log(`✅ Download allowed: ${limitCheck.count}/${limitCheck.limit}`);
+    } catch (error) {
+      console.error('⚠️  Failed to check download limit:', error.message);
+      console.log('   Continuing with download anyway...');
     }
 
-    console.log(`✅ Download allowed: ${limitCheck.count}/${limitCheck.limit}`);
-
     // Get all premium accounts and proxies
-    const apiData = await getDataFromApiWithoutVerify(prefix);  // ✅ CHANGED
+    const apiData = await getDataFromApiWithoutVerify(prefix);
     const accountsArray = apiData.access_configuration_preferences[0].accounts;
     const proxiesArray = apiData.access_configuration_preferences[1]?.proxies || [];
 
@@ -103,20 +87,15 @@ export async function processEnvatoDownload(req, res) {
       return res.status(500).json({ error: 'No Envato accounts available' });
     }
 
-    // Get current rotation index
+    // Get current rotation index (10-minute intervals)
     const currentIndex = getCurrentRotationIndex(accountsArray.length);
     const cookiesStr = accountsArray[currentIndex];
-
     const proxyAddress = proxiesArray[currentIndex];
-// ✅ ADD DEBUG LOGS
-console.log('🔍 DEBUG - cookiesStr type:', typeof cookiesStr);
-console.log('🔍 DEBUG - cookiesStr length:', cookiesStr?.length);
-console.log('🔍 DEBUG - First 200 chars:', cookiesStr?.substring?.(0, 200));
-console.log('🔍 DEBUG - Is Array?:', Array.isArray(cookiesStr));
+
     console.log(`🔄 Using account ${currentIndex + 1}/${accountsArray.length}`);
     console.log(`🌐 Using proxy: ${proxyAddress || 'none'}`);
 
-    // ✅ UPDATED: Parse cookies JSON array
+    // Parse cookies JSON array
     let cookies;
     try {
       cookies = JSON.parse(cookiesStr);
@@ -130,9 +109,12 @@ console.log('🔍 DEBUG - Is Array?:', Array.isArray(cookiesStr));
       .map(cookie => `${cookie.name}=${cookie.value}`)
       .join('; ');
 
-    // Build upstream URL
-    let upstreamUrl = `https://${envatoConfig.domain}${req.originalUrl}`;
-    upstreamUrl = upstreamUrl.replace('/envato', '');
+    // ✅ Build upstream URL - handle both /envato prefix and direct paths
+    let upstreamUrl = req.originalUrl
+      .replace('/envato/', '/')
+      .replace('/envato', '');
+
+    upstreamUrl = `https://${envatoConfig.domain}${upstreamUrl}`;
 
     console.log('🎯 Download URL:', upstreamUrl);
 
@@ -143,9 +125,21 @@ console.log('🔍 DEBUG - Is Array?:', Array.isArray(cookiesStr));
 
         // Step 1: Get CSRF tokens from homepage
         const homeHeaders = {
+          'authority': envatoConfig.domain,
           'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
           'accept-language': 'en-US,en;q=0.9',
+          'cache-control': 'max-age=0',
+          'referer': `https://${envatoConfig.domain}/`,
+          'sec-ch-ua': '"Not;A=Brand";v="99", "Google Chrome";v="139", "Chromium";v="139"',
+          'sec-ch-ua-mobile': '?0',
+          'sec-ch-ua-platform': '"Windows"',
+          'sec-fetch-dest': 'document',
+          'sec-fetch-mode': 'navigate',
+          'sec-fetch-site': 'same-origin',
+          'sec-fetch-user': '?1',
+          'upgrade-insecure-requests': '1',
           'user-agent': USER_AGENT,
+          'accept-encoding': 'gzip',
           'Cookie': cookieString
         };
 
@@ -184,10 +178,18 @@ console.log('🔍 DEBUG - Is Array?:', Array.isArray(cookiesStr));
           'accept-language': 'en-US,en;q=0.9',
           'content-type': 'application/json',
           'origin': `https://${envatoConfig.domain}`,
+          'priority': 'u=1, i',
           'referer': `https://${envatoConfig.domain}/account/downloads`,
+          'sec-ch-ua': '"Not;A=Brand";v="99", "Chromium";v="138", "Google Chrome";v="138"',
+          'sec-ch-ua-mobile': '?0',
+          'sec-ch-ua-platform': '"Windows"',
+          'sec-fetch-dest': 'empty',
+          'sec-fetch-mode': 'cors',
+          'sec-fetch-site': 'same-origin',
           'user-agent': USER_AGENT,
           'x-csrf-token': backendCsrfToken,
           'x-csrf-token-2': csrfToken,
+          'accept-encoding': 'gzip',
           'Cookie': cookieString
         };
 
@@ -211,20 +213,27 @@ console.log('🔍 DEBUG - Is Array?:', Array.isArray(cookiesStr));
 
         const downloadResponse = await axios(downloadConfig);
 
+        console.log(`📊 Download response status: ${downloadResponse.status}`);
+
         // Check if response contains download URL
         const responseContent = Buffer.from(downloadResponse.data).toString('utf-8');
 
         if (responseContent.includes('downloadUrl')) {
           console.log('✅ Download successful!');
 
-          // Record the download
-          await recordDownloadAction(req, 'envato', userEmail, 'file_download');
+          // ✅ Record the download (try-catch to not block on failure)
+          try {
+            await recordDownloadAction(req, 'envato', userEmail, 'file_download');
+          } catch (recordError) {
+            console.error('⚠️  Failed to record download:', recordError.message);
+          }
 
           // Return response
           const contentType = downloadResponse.headers['content-type'] || 'application/json';
           return res.status(downloadResponse.status).type(contentType).send(downloadResponse.data);
         } else {
           console.log(`⚠️  Attempt ${attempt + 1}: No download URL in response`);
+          console.log(`   Response preview: ${responseContent.substring(0, 200)}`);
         }
 
       } catch (error) {
@@ -235,15 +244,16 @@ console.log('🔍 DEBUG - Is Array?:', Array.isArray(cookiesStr));
 
     // All attempts failed
     console.error('❌ All download attempts failed');
-    return res.status(500).json({ 
-      error: 'Download failed after multiple attempts' 
+    return res.status(500).json({
+      error: 'Download failed after multiple attempts'
     });
 
   } catch (error) {
     console.error('❌ Error in Envato download:', error.message);
-    return res.status(500).json({ 
+    console.error('Stack trace:', error.stack);
+    return res.status(500).json({
       error: 'Download failed',
-      message: error.message 
+      message: error.message
     });
   }
 }
@@ -255,9 +265,9 @@ export async function proxyEnvatoAssets(req, res) {
   try {
     const assetPath = req.path.replace('/assets', '');
     const targetUrl = `https://assets.elements.envato.com${assetPath}`;
-    
+
     console.log('🎨 Proxying Envato asset:', targetUrl);
-    
+
     const response = await axios.get(targetUrl, {
       responseType: 'arraybuffer',
       headers: {
@@ -269,24 +279,25 @@ export async function proxyEnvatoAssets(req, res) {
       },
       validateStatus: () => true
     });
-    
-    // ✅ CRITICAL: Set CORS headers FIRST
+
+    // Set CORS headers
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
     res.set('Access-Control-Allow-Headers', '*');
     res.set('Cache-Control', 'public, max-age=31536000');
-    
+
     // Copy content type
     if (response.headers['content-type']) {
       res.set('Content-Type', response.headers['content-type']);
     }
-    
+
     return res.status(response.status).send(response.data);
   } catch (error) {
     console.error('❌ Error proxying Envato asset:', error.message);
     return res.status(500).json({ error: 'Failed to proxy asset' });
   }
 }
+
 /**
  * Proxy Envato images
  */
@@ -294,17 +305,17 @@ export async function proxyEnvatoImages(req, res) {
   try {
     // Get user cookies
     const userData = await decryptUserCookies(req);
-    
+
     if (userData.redirect) {
       return res.redirect(userData.redirect);
     }
 
     const prefix = userData.prefix;
-    
+
     // Get premium cookies
     const apiData = await getDataFromApiWithoutVerify(prefix);
     const accountsArray = apiData.access_configuration_preferences[0].accounts;
-    
+
     if (!accountsArray || accountsArray.length === 0) {
       return res.status(500).json({ error: 'No accounts available' });
     }
@@ -312,7 +323,7 @@ export async function proxyEnvatoImages(req, res) {
     // Get current rotation index
     const currentIndex = getCurrentRotationIndex(accountsArray.length);
     const cookiesStr = accountsArray[currentIndex];
-    
+
     // Parse cookies JSON array
     let cookies;
     try {
@@ -321,7 +332,7 @@ export async function proxyEnvatoImages(req, res) {
       console.error('❌ Failed to parse cookies:', e.message);
       return res.status(500).json({ error: 'Invalid cookie format' });
     }
-    
+
     // Convert cookie objects to cookie string
     const cookieString = cookies
       .map(cookie => `${cookie.name}=${cookie.value}`)
@@ -329,15 +340,15 @@ export async function proxyEnvatoImages(req, res) {
 
     // Get the full path after /envato/images
     let imagePath = req.originalUrl.replace('/envato/images', '');
-    
+
     // If imagePath is empty or just '/', use req.path
     if (!imagePath || imagePath === '/') {
       imagePath = req.path.replace('/images', '');
     }
-    
+
     console.log('🖼️  Image request - Original URL:', req.originalUrl);
     console.log('🖼️  Image request - Extracted path:', imagePath);
-    
+
     // Determine the correct domain
     let targetDomain;
     if (imagePath.includes('envato-shoebox') || imagePath.includes('envato-dam')) {
@@ -348,33 +359,33 @@ export async function proxyEnvatoImages(req, res) {
       // Default to elements-resized
       targetDomain = 'elements-resized.envatousercontent.com';
     }
-    
+
     const targetUrl = `https://${targetDomain}${imagePath}`;
-    
+
     console.log('🖼️  Proxying Envato image:', targetUrl);
-    
+
     const response = await axios.get(targetUrl, {
       responseType: 'arraybuffer',
       headers: {
         'User-Agent': USER_AGENT,
         'Referer': 'https://elements.envato.com/',
         'Accept': 'image/*',
-        'Cookie': cookieString  // ✅ ADD COOKIES!
+        'Cookie': cookieString
       },
       validateStatus: () => true,
       timeout: 10000
     });
-    
+
     console.log('✅ Image response status:', response.status);
-    
+
     // Set CORS headers
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Cache-Control', 'public, max-age=31536000');
-    
+
     if (response.headers['content-type']) {
       res.set('Content-Type', response.headers['content-type']);
     }
-    
+
     return res.status(response.status).send(response.data);
   } catch (error) {
     console.error('❌ Error proxying Envato image:', error.message);
@@ -385,25 +396,22 @@ export async function proxyEnvatoImages(req, res) {
 /**
  * Proxy Envato account API requests
  */
-/**
- * Proxy Envato account API requests
- */
 export async function proxyEnvatoAccount(req, res) {
   try {
     // Get user cookies
     const userData = await decryptUserCookies(req);
-    
+
     if (userData.redirect) {
       return res.redirect(userData.redirect);
     }
 
     const authToken = userData.auth_token;
     const prefix = userData.prefix;
-    
+
     // Get premium cookies
     const apiData = await getDataFromApiWithoutVerify(prefix);
     const accountsArray = apiData.access_configuration_preferences[0].accounts;
-    
+
     if (!accountsArray || accountsArray.length === 0) {
       return res.status(500).json({ error: 'No accounts available' });
     }
@@ -411,7 +419,7 @@ export async function proxyEnvatoAccount(req, res) {
     // Get current rotation index
     const currentIndex = getCurrentRotationIndex(accountsArray.length);
     const cookiesStr = accountsArray[currentIndex];
-    
+
     // Parse cookies JSON array
     let cookies;
     try {
@@ -421,22 +429,22 @@ export async function proxyEnvatoAccount(req, res) {
       console.error('❌ Failed to parse cookies:', e.message);
       return res.status(500).json({ error: 'Invalid cookie format' });
     }
-    
+
     // Convert cookie objects to cookie string
     const cookieString = cookies
       .map(cookie => `${cookie.name}=${cookie.value}`)
       .join('; ');
-    
+
     console.log('🍪 Cookie string created with', cookies.length, 'cookies');
 
     // Remove /account prefix and build target URL
     const cleanPath = req.path.replace(/^\/account/, '');
     const queryString = req.url.includes('?') ? req.url.substring(req.url.indexOf('?')) : '';
     const targetUrl = `https://account.envato.com${cleanPath}${queryString}`;
-    
+
     console.log('🔑 Proxying account request:', targetUrl);
     console.log('🔑 Method:', req.method);
-    
+
     const response = await axios({
       method: req.method,
       url: targetUrl,
@@ -453,52 +461,55 @@ export async function proxyEnvatoAccount(req, res) {
       validateStatus: () => true,
       responseType: 'arraybuffer'
     });
-    
+
     console.log(`✅ Account API response: ${response.status}`);
-    
-    // ✅ Handle 429 - just return empty success response
+
+    // Handle 429 - just return empty success response
     if (response.status === 429) {
       console.log('⚠️  Rate limited - returning empty response');
       res.set('Access-Control-Allow-Origin', '*');
       res.set('Content-Type', 'application/json');
       return res.status(200).json({ success: true });
     }
-    
+
     // Set CORS headers
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Access-Control-Allow-Credentials', 'true');
-    
+
     // Copy content type
     if (response.headers['content-type']) {
       res.set('Content-Type', response.headers['content-type']);
     }
-    
+
     return res.status(response.status).send(response.data);
   } catch (error) {
     console.error('❌ Error proxying account request:', error.message);
-    return res.status(500).json({ 
+    return res.status(500).json({
       error: 'Account proxy error',
-      message: error.message 
+      message: error.message
     });
   }
 }
 
+/**
+ * Proxy Envato API requests (data-api and elements-api)
+ */
 export async function proxyEnvatoApi(req, res, apiType) {
   try {
     // Get user cookies
     const userData = await decryptUserCookies(req);
-    
+
     if (userData.redirect) {
       return res.redirect(userData.redirect);
     }
 
     const authToken = userData.auth_token;
     const prefix = userData.prefix;
-    
+
     // Get premium cookies
     const apiData = await getDataFromApiWithoutVerify(prefix);
     const accountsArray = apiData.access_configuration_preferences[0].accounts;
-    
+
     if (!accountsArray || accountsArray.length === 0) {
       return res.status(500).json({ error: 'No accounts available' });
     }
@@ -506,7 +517,7 @@ export async function proxyEnvatoApi(req, res, apiType) {
     // Get current rotation index
     const currentIndex = getCurrentRotationIndex(accountsArray.length);
     const cookiesStr = accountsArray[currentIndex];
-    
+
     // Parse cookies JSON array
     let cookies;
     try {
@@ -516,18 +527,18 @@ export async function proxyEnvatoApi(req, res, apiType) {
       console.error('❌ Failed to parse cookies:', e.message);
       return res.status(500).json({ error: 'Invalid cookie format' });
     }
-    
+
     // Convert cookie objects to cookie string
     const cookieString = cookies
       .map(cookie => `${cookie.name}=${cookie.value}`)
       .join('; ');
 
-// Build target URL - preserve the API type in the path
-const queryString = req.url.includes('?') ? req.url.substring(req.url.indexOf('?')) : '';
-const targetUrl = `https://elements.envato.com/${apiType}${req.path}${queryString}`;
+    // Build target URL - preserve the API type in the path
+    const queryString = req.url.includes('?') ? req.url.substring(req.url.indexOf('?')) : '';
+    const targetUrl = `https://elements.envato.com/${apiType}${req.path}${queryString}`;
 
-console.log(`🎯 Proxying ${apiType} request:`, targetUrl);
-    
+    console.log(`🎯 Proxying ${apiType} request:`, targetUrl);
+
     const response = await axios({
       method: req.method,
       url: targetUrl,
@@ -543,33 +554,32 @@ console.log(`🎯 Proxying ${apiType} request:`, targetUrl);
       data: req.body,
       validateStatus: () => true
     });
-    
+
     console.log(`✅ ${apiType} response: ${response.status}`);
-    
-    // ✅ Handle 404 and 429 gracefully
+
+    // Handle 404 and 429 gracefully
     if (response.status === 404 || response.status === 429) {
       console.log(`⚠️  Status ${response.status} - returning empty response`);
       res.set('Access-Control-Allow-Origin', '*');
       res.set('Content-Type', 'application/json');
       return res.status(200).json({ data: [] });
     }
-    
+
     // Set CORS headers
     res.set('Access-Control-Allow-Origin', '*');
-    
+
     // Copy content type
     if (response.headers['content-type']) {
       res.set('Content-Type', response.headers['content-type']);
     }
-    
-    // ✅ SINGLE RETURN STATEMENT
+
     return res.status(response.status).send(response.data);
-    
+
   } catch (error) {
     console.error(`❌ Error proxying ${apiType}:`, error.message);
-    return res.status(500).json({ 
+    return res.status(500).json({
       error: `${apiType} proxy error`,
-      message: error.message 
+      message: error.message
     });
   }
 }

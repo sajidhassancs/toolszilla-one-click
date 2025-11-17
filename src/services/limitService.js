@@ -13,11 +13,12 @@ export async function canUserDownload(req, toolName, userEmail, plan = 'default'
   try {
     // Get current download count
     const result = await checkDownloadLimit(toolName, userEmail);
-    
+
     if (!result.success) {
       console.error('❌ Failed to check download limit');
+      // ✅ CHANGED: Return allowed: true (fail-open)
       return {
-        allowed: false,
+        allowed: true,  // ✅ Changed from false to true
         count: 0,
         limit: DOWNLOAD_LIMITS[plan] || DOWNLOAD_LIMITS.default,
         error: 'Failed to check limit'
@@ -36,8 +37,9 @@ export async function canUserDownload(req, toolName, userEmail, plan = 'default'
     };
   } catch (error) {
     console.error('❌ Error checking download limit:', error.message);
+    // ✅ CHANGED: Return allowed: true (fail-open)
     return {
-      allowed: false,
+      allowed: true,  // ✅ Changed from false to true
       count: 0,
       limit: DOWNLOAD_LIMITS[plan] || DOWNLOAD_LIMITS.default,
       error: error.message
