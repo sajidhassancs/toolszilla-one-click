@@ -16,10 +16,11 @@ import {
   proxyFreepikImage,
   proxyFreepikAssets,
   proxyFreepikFPS,
-  proxyFreepikStaticCDNPK
+  proxyFreepikStaticCDNPK,
+
 } from './handlers/freepikHandlers.js';
 import { proxyAssetWithPuppeteer } from './handlers/puppeteerProxy.js';
-
+import { proxyFreepikWithAxios } from './handlers/freepikAxiosProxy.js';
 const router = express.Router();
 
 console.log('🎨 [FREEPIK] Router initialized');
@@ -117,8 +118,8 @@ router.use('/fonts', (req, res) => {
 // 🎭 CATCH-ALL (MUST BE LAST!)
 // ============================================
 router.use((req, res) => {
-  console.log('🎨 [FREEPIK] Catch-all:', req.path);
-  return proxyFreepikWithPuppeteer(req, res);
+  console.log('🎨 [FREEPIK] Catch-all:', req.url);
+  return proxyFreepikWithAxios(req, res);  // ← Changed from Puppeteer to Axios
 });
 
 export default router;

@@ -23,11 +23,11 @@ export async function proxyPikbestWithAxios(req, res) {
     const prefix = userData.prefix;
     const apiData = await getDataFromApiWithoutVerify(prefix);
     let cookiesArray = apiData.access_configuration_preferences[0].accounts[0];
-    
+
     if (typeof cookiesArray === 'string') {
       cookiesArray = JSON.parse(cookiesArray);
     }
-    
+
     const cookieString = cookiesArray
       .map(cookie => `${cookie.name}=${cookie.value}`)
       .join('; ');
@@ -35,19 +35,19 @@ export async function proxyPikbestWithAxios(req, res) {
     // Clean the path
     const productPrefix = '/pikbest';
     let cleanPath = req.originalUrl;
-    
+
     if (cleanPath.startsWith(productPrefix)) {
       cleanPath = cleanPath.substring(productPrefix.length);
     }
-    
+
     if (!cleanPath.startsWith('/')) {
       cleanPath = '/' + cleanPath;
     }
-    
+
     // Build target URL
     const targetUrl = `https://${pikbestConfig.domain}${cleanPath}`;
     console.log('🎯 Target URL:', targetUrl);
-    
+
     // Make request
     const response = await axios({
       method: req.method,
@@ -61,80 +61,101 @@ export async function proxyPikbestWithAxios(req, res) {
       validateStatus: () => true,
       responseType: 'arraybuffer'
     });
-    
+
     console.log(`✅ Response: ${response.status}`);
-    
+
     res.set('Access-Control-Allow-Origin', '*');
-    
+
     const contentType = response.headers['content-type'] || 'application/octet-stream';
     const currentHost = `${req.protocol}://${req.get('host')}`;
-    
-    // For HTML, rewrite URLs
+
+    // For HTML, rewrite URLs AND inject custom download handler
     if (contentType.includes('text/html')) {
       let html = response.data.toString('utf-8');
-      
+
       console.log('🔧 Rewriting URLs in HTML...');
-      
+
       // Replace CDN domains
       html = html.replace(/https:\/\/img\.pikbest\.com/g, `${currentHost}/pikbest/img`);
       html = html.replace(/https:\/\/img01\.pikbest\.com/g, `${currentHost}/pikbest/img01`);
       html = html.replace(/https:\/\/img02\.pikbest\.com/g, `${currentHost}/pikbest/img02`);
       html = html.replace(/https:\/\/img03\.pikbest\.com/g, `${currentHost}/pikbest/img03`);
       html = html.replace(/https:\/\/static\.pikbest\.com/g, `${currentHost}/pikbest/static`);
-      
+
       // Protocol-relative URLs
       html = html.replace(/\/\/img\.pikbest\.com/g, `${currentHost}/pikbest/img`);
       html = html.replace(/\/\/img01\.pikbest\.com/g, `${currentHost}/pikbest/img01`);
       html = html.replace(/\/\/img02\.pikbest\.com/g, `${currentHost}/pikbest/img02`);
       html = html.replace(/\/\/img03\.pikbest\.com/g, `${currentHost}/pikbest/img03`);
       html = html.replace(/\/\/static\.pikbest\.com/g, `${currentHost}/pikbest/static`);
-      
+
       // Add base tag
       if (html.includes('<head>')) {
         const baseTag = `<base href="${currentHost}/pikbest/">`;
         html = html.replace('<head>', `<head>${baseTag}`);
         console.log('   ✅ Injected base tag');
       }
-      
+
       // Fix absolute paths
       html = html.replace(/href="\//g, 'href="/pikbest/');
       html = html.replace(/src="\//g, 'src="/pikbest/');
       html = html.replace(/srcset="\//g, 'srcset="/pikbest/');
       html = html.replace(/url\(\//g, 'url(/pikbest/');
-      
+
       // Fix double slashes
       html = html.replace(/\/pikbest\/pikbest\//g, '/pikbest/');
-      
+
+      // ✅ CRITICAL: Add custom download handler (EXACTLY like Python)
+      const customJS = `
+<script>
+function downVerifyNew(picId, flag, isDetail) {
+    location.href = '/pikbest/?m=download&id=' + picId + '&flag=' + flag;
+}
+</script>
+`;
+
+      // ✅ CRITICAL: Replace downVerify(' with downVerifyNew(' (EXACTLY like Python)
+      html = html.replace(/downVerify\('/g, "downVerifyNew('");
+
+      // Inject custom JS before closing body tag
+      if (html.includes('</body>')) {
+        html = html.replace('</body>', customJS + '</body>');
+        console.log('   ✅ Injected custom download handler');
+      } else {
+        html += customJS;
+        console.log('   ✅ Appended custom download handler');
+      }
+
       console.log('   ✅ URL rewriting complete');
-      
+
       return res.status(response.status).type('text/html').send(html);
     }
-    
+
     // For JavaScript
     if (contentType.includes('javascript')) {
       let js = response.data.toString('utf-8');
-      
+
       js = js.replace(/https:\/\/img\.pikbest\.com/g, `${currentHost}/pikbest/img`);
       js = js.replace(/https:\/\/static\.pikbest\.com/g, `${currentHost}/pikbest/static`);
       js = js.replace(/"\/api\//g, '"/pikbest/api/');
-      
+
       return res.status(response.status).type(contentType).send(js);
     }
-    
+
     // For CSS
     if (contentType.includes('css')) {
       let css = response.data.toString('utf-8');
-      
+
       css = css.replace(/url\(\//g, 'url(/pikbest/');
       css = css.replace(/https:\/\/img\.pikbest\.com/g, `${currentHost}/pikbest/img`);
       css = css.replace(/https:\/\/static\.pikbest\.com/g, `${currentHost}/pikbest/static`);
-      
+
       return res.status(response.status).type(contentType).send(css);
     }
-    
+
     // For other content
     return res.status(response.status).type(contentType).send(response.data);
-    
+
   } catch (error) {
     console.error('❌ Error proxying Pikbest:', error.message);
     return res.status(500).json({ error: error.message });
@@ -147,7 +168,7 @@ export async function proxyPikbestWithAxios(req, res) {
 export async function proxyPikbestAPI(req, res) {
   try {
     const userData = await decryptUserCookies(req);
-    
+
     if (userData.redirect) {
       return res.status(403).json({ error: 'Unauthorized' });
     }
@@ -155,20 +176,20 @@ export async function proxyPikbestAPI(req, res) {
     const prefix = userData.prefix;
     const apiData = await getDataFromApiWithoutVerify(prefix);
     let cookiesArray = apiData.access_configuration_preferences[0].accounts[0];
-    
+
     if (typeof cookiesArray === 'string') {
       cookiesArray = JSON.parse(cookiesArray);
     }
-    
+
     const cookieString = cookiesArray
       .map(cookie => `${cookie.name}=${cookie.value}`)
       .join('; ');
 
     const apiPath = req.originalUrl.replace('/pikbest/api', '').replace('/pikbest', '');
     const targetUrl = `https://pikbest.com${apiPath}`;
-    
+
     console.log('🔌 Proxying Pikbest API:', targetUrl);
-    
+
     const response = await axios({
       method: req.method,
       url: targetUrl,
@@ -183,16 +204,31 @@ export async function proxyPikbestAPI(req, res) {
       validateStatus: () => true,
       timeout: 10000
     });
-    
+
     console.log('✅ API response status:', response.status);
-    
+
+    // ✅ CRITICAL: Rewrite download URLs in API response HTML
+    let responseData = response.data;
+
+    if (responseData && responseData.html && typeof responseData.html === 'string') {
+      const currentHost = `${req.protocol}://${req.get('host')}`;
+
+      // Rewrite download link: /?m=download&id=X → /pikbest/?m=download&id=X
+      responseData.html = responseData.html.replace(
+        /href="\/?(\?m=download[^"]*)"/g,
+        `href="${currentHost}/pikbest/$1"`
+      );
+
+      console.log('🔧 Rewrote download URLs in API response');
+    }
+
     res.set('Access-Control-Allow-Origin', '*');
-    
+
     if (response.headers['content-type']) {
       res.set('Content-Type', response.headers['content-type']);
     }
-    
-    return res.status(response.status).send(response.data);
+
+    return res.status(response.status).send(responseData);
   } catch (error) {
     console.error('❌ Error proxying Pikbest API:', error.message);
     return res.status(500).json({ error: 'API proxy error' });
@@ -212,11 +248,11 @@ export async function proxyPikbestImages(req, res, domain) {
     const prefix = userData.prefix;
     const apiData = await getDataFromApiWithoutVerify(prefix);
     let cookiesArray = apiData.access_configuration_preferences[0].accounts[0];
-    
+
     if (typeof cookiesArray === 'string') {
       cookiesArray = JSON.parse(cookiesArray);
     }
-    
+
     const cookieString = cookiesArray
       .map(cookie => `${cookie.name}=${cookie.value}`)
       .join('; ');
@@ -231,11 +267,11 @@ export async function proxyPikbestImages(req, res, domain) {
       .replace('/pikbest/css', '')
       .replace('/pikbest/js', '')
       .replace('/pikbest', '');
-    
+
     const targetUrl = `https://${domain}${assetPath}`;
-    
+
     console.log('🎨 Proxying asset:', targetUrl);
-    
+
     const response = await axios.get(targetUrl, {
       responseType: 'arraybuffer',
       headers: {
@@ -247,16 +283,16 @@ export async function proxyPikbestImages(req, res, domain) {
       validateStatus: () => true,
       timeout: 15000
     });
-    
+
     console.log('✅ Asset response:', response.status);
-    
+
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Cache-Control', 'public, max-age=31536000');
-    
+
     if (response.headers['content-type']) {
       res.set('Content-Type', response.headers['content-type']);
     }
-    
+
     return res.status(response.status).send(response.data);
   } catch (error) {
     console.error('❌ Error proxying asset:', error.message);

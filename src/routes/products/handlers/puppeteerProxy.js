@@ -399,10 +399,15 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
   console.log('🔧 [FREEPIK] Installing interceptors...');
   
 
-  // ✅ CRITICAL: Fix window.location.pathname for Freepik internal paths
-if (window.location.pathname.startsWith('/freepik/pikaso') ||
-    window.location.pathname.startsWith('/freepik/wepik') ||
-    window.location.pathname.startsWith('/freepik/slidesgo')) {
+// ✅ CRITICAL: Fix window.location.pathname for Freepik internal paths
+if (window.location.pathname.startsWith('/pikaso') ||
+    window.location.pathname.startsWith('/wepik') ||
+    window.location.pathname.startsWith('/slidesgo') ||
+    window.location.pathname.startsWith('/ai') ||
+    window.location.pathname.startsWith('/profile')) {
+  console.log('🔧 Path is already clean:', window.location.pathname);
+  // Path is correct, do nothing
+} else if (window.location.pathname.startsWith('/freepik/')) {
   // Remove /freepik prefix from URL bar
   const cleanPath = window.location.pathname.replace('/freepik', '');
   console.log('🔧 Rewriting browser URL from', window.location.pathname, 'to', cleanPath);
@@ -484,34 +489,44 @@ const observer = new MutationObserver((mutations) => {
     }
   }, true);
   
-  // ✅ Fetch interceptor
-  const originalFetch = window.fetch;
-  window.fetch = function(...args) {
-    let url = args[0];
-    if (typeof url === 'string') {
-      if (url.startsWith('https://www.freepik.com/')) {
-        const path = url.replace('https://www.freepik.com', '');
-        if (isInternalPath(path)) {
-          console.log('[FETCH SKIPPED - INTERNAL - USING RELATIVE]', url, '→', path);
-          args[0] = path;
-        } else {
-          const newUrl = '/freepik' + path;
-          console.log('[FETCH INTERCEPTED ABSOLUTE]', url, '→', newUrl);
-          args[0] = newUrl;
-        }
-      }
-      else if (url.startsWith('/') && !url.startsWith('/freepik') && !url.startsWith('/_next')) {
-        if (isInternalPath(url)) {
-          console.log('[FETCH SKIPPED - INTERNAL]', url);
-        } else {
-          const newUrl = '/freepik' + url;
-          console.log('[FETCH INTERCEPTED]', url, '→', newUrl);
-          args[0] = newUrl;
-        }
+// ✅ Fetch interceptor
+const originalFetch = window.fetch;
+window.fetch = function(...args) {
+  let url = args[0];
+  console.log('🔍 [FETCH DEBUG] Original URL:', url, 'Type:', typeof url);
+
+  if (typeof url === 'string') {
+    // ✅ Check for /api/ calls FIRST
+    if (url.startsWith('/api/')) {
+      const newUrl = '/freepik' + url;
+      console.log('[FETCH INTERCEPTED API]', url, '→', newUrl);
+      args[0] = newUrl;
+      return originalFetch.apply(this, args);
+    }
+
+    if (url.startsWith('https://www.freepik.com/')) {
+      const path = url.replace('https://www.freepik.com', '');
+      if (isInternalPath(path)) {
+        console.log('[FETCH SKIPPED - INTERNAL - USING RELATIVE]', url, '→', path);
+        args[0] = path;
+      } else {
+        const newUrl = '/freepik' + path;
+        console.log('[FETCH INTERCEPTED ABSOLUTE]', url, '→', newUrl);
+        args[0] = newUrl;
       }
     }
-    return originalFetch.apply(this, args);
-  };
+    else if (url.startsWith('/') && !url.startsWith('/freepik') && !url.startsWith('/_next')) {
+      if (isInternalPath(url)) {
+        console.log('[FETCH SKIPPED - INTERNAL]', url);
+      } else {
+        const newUrl = '/freepik' + url;
+        console.log('[FETCH INTERCEPTED]', url, '→', newUrl);
+        args[0] = newUrl;
+      }
+    }
+  }
+  return originalFetch.apply(this, args);
+};
   
   // ✅ XHR interceptor
   const originalOpen = XMLHttpRequest.prototype.open;

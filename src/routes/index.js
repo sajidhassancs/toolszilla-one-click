@@ -548,6 +548,10 @@ router.use((req, res, next) => {
     } else if (productCookie === 'storyblocks') {  // ✅ ADD THIS
       console.log(`🔀 [ROOT API] ${req.originalUrl} → /storyblocks${req.originalUrl}`);
       req.url = `/storyblocks${req.originalUrl}`;
+
+    } else if (productCookie === 'pikbest') {  // ✅ ADD THIS
+      console.log(`🔀 [ROOT API] ${req.originalUrl} → /pikbest${req.originalUrl}`);
+      req.url = `/pikbest${req.originalUrl}`;
     }
   }
 

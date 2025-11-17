@@ -97,9 +97,123 @@ export async function proxyFreepikStaticCDNPK(req, res) {
     return res.status(500).json({ error: 'Failed to proxy static cdnpk asset' });
   }
 }
+
+
 /**
- * Proxy Freepik static assets
+ * Axios-based Freepik proxy (faster and better for client-side routing)
  */
+export async function proxyFreepikWithAxios(req, res) {
+  try {
+    console.log('🎨 [AXIOS] Freepik request:', req.method, req.originalUrl);
+
+    // Get user cookies
+    const userData = await decryptUserCookies(req);
+    if (userData.redirect) {
+      return res.redirect(userData.redirect);
+    }
+
+    const prefix = userData.prefix;
+    const apiData = await getDataFromApiWithoutVerify(prefix);
+    let cookiesArray = apiData.access_configuration_preferences[0].accounts[0];
+
+    if (typeof cookiesArray === 'string') {
+      cookiesArray = JSON.parse(cookiesArray);
+    }
+
+    // Build cookie string
+    const cookieString = cookiesArray.map(c => `${c.name}=${c.value}`).join('; ');
+
+    // Build target URL (use req.url which has /freepik prefix removed by router)
+    let cleanPath = req.url;
+    if (!cleanPath.startsWith('/')) {
+      cleanPath = '/' + cleanPath;
+    }
+
+    const targetUrl = `https://www.freepik.com${cleanPath}`;
+    console.log('🎯 Target URL:', targetUrl);
+
+    // Make request
+    const response = await axios({
+      method: req.method,
+      url: targetUrl,
+      headers: {
+        'User-Agent': USER_AGENT,
+        'Referer': 'https://www.freepik.com/',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Cookie': cookieString
+      },
+      data: req.body,
+      validateStatus: () => true,
+      responseType: 'arraybuffer',
+      maxRedirects: 5,
+      timeout: 30000
+    });
+
+    console.log(`✅ Freepik response: ${response.status}`);
+
+    const contentType = response.headers['content-type'] || '';
+    const isLocalhost = req.get('host').includes('localhost') || req.get('host').includes('127.0.0.1');
+    const protocol = isLocalhost ? 'http' : 'https';
+    const currentHost = `${protocol}://${req.get('host')}`;
+
+    // Handle HTML
+    if (contentType.includes('text/html')) {
+      let html = response.data.toString('utf-8');
+
+      console.log('🔧 Rewriting Freepik HTML...');
+
+      // ✅ CRITICAL: Inject URL fix script BEFORE React loads
+      const urlFixScript = `
+<script>
+(function() {
+  console.log('🔧 [FREEPIK] Fixing window.location...');
+  
+  // Check if URL has /freepik prefix and remove it
+  if (window.location.pathname.startsWith('/freepik/')) {
+    const cleanPath = window.location.pathname.replace('/freepik', '');
+    console.log('🔧 URL rewrite:', window.location.pathname, '→', cleanPath);
+    window.history.replaceState({}, '', cleanPath + window.location.search + window.location.hash);
+  }
+  
+  console.log('✅ URL fixed, path is now:', window.location.pathname);
+})();
+</script>
+`;
+
+      // ✅ Inject RIGHT AFTER <head> tag (before React loads)
+      if (html.includes('<head>')) {
+        html = html.replace('<head>', `<head>${urlFixScript}`);
+        console.log('   ✅ Injected URL fix script');
+      }
+
+      // Replace domain URLs
+      html = html.replace(/https:\/\/www\.freepik\.com/g, `${currentHost}/freepik`);
+      html = html.replace(/https:\/\/cdn\.freepik\.com/g, `${currentHost}/freepik/cdn`);
+      html = html.replace(/https:\/\/cdnb\.freepik\.com/g, `${currentHost}/freepik/cdnb`);
+      html = html.replace(/https:\/\/static\.freepik\.com/g, `${currentHost}/freepik/static`);
+
+      console.log('   ✅ HTML rewriting complete');
+
+      res.set('Content-Type', 'text/html; charset=utf-8');
+      return res.status(response.status).send(html);
+    }
+
+    // Handle other content types
+    if (contentType) {
+      res.set('Content-Type', contentType);
+    }
+    res.set('Access-Control-Allow-Origin', '*');
+    return res.status(response.status).send(response.data);
+
+  } catch (error) {
+    console.error('❌ Freepik Axios proxy error:', error.message);
+    return res.status(500).json({
+      error: 'Freepik proxy error',
+      message: error.message
+    });
+  }
+}
 export async function proxyFreepikStatic(req, res) {
   try {
     const assetPath = req.path.replace('/static', '');

@@ -5,7 +5,7 @@
 import express from 'express';
 import pikbestConfig from '../../../products/pikbest.js';
 import { showLimitReachedPage } from '../../controllers/downloadController.js';
-import { 
+import {
   proxyPikbestWithAxios,
   proxyPikbestAPI,
   proxyPikbestImages
@@ -43,12 +43,22 @@ router.get('/manifest.json', (req, res) => {
 // API calls
 router.use('/api', (req, res) => {
   console.log('🔌 [PIKBEST] API route hit:', req.originalUrl);
+  console.log('   Query:', req.query);
+  console.log('   Method:', req.method);
   return proxyPikbestAPI(req, res);
 });
 
-// ============================================
-// ✅ STATIC ASSETS (CDN/Images)
-// ============================================
+// ✅ ADD: Download endpoint (in case it's separate)
+router.get('/download', (req, res) => {
+  console.log('📥 [PIKBEST] Download route hit:', req.originalUrl);
+  return proxyPikbestAPI(req, res);
+});
+
+router.post('/download', (req, res) => {
+  console.log('📥 [PIKBEST] Download POST route hit:', req.originalUrl);
+  return proxyPikbestAPI(req, res);
+});
+
 
 // Main image CDN
 router.use('/img', (req, res) => {
@@ -80,18 +90,31 @@ router.use('/static', (req, res) => {
   return proxyPikbestImages(req, res, 'static.pikbest.com');
 });
 
-// CSS files
+// ✅ FIX: CSS files
 router.use('/css', (req, res) => {
-  console.log('🎨 [PIKBEST] CSS route hit');
-  return proxyPikbestImages(req, res, 'pikbest.com');
+  console.log('🎨 [PIKBEST] CSS route hit:', req.path);
+  return proxyPikbestImages(req, res, 'static.pikbest.com');
 });
 
-// JavaScript files
+// ✅ FIX: JavaScript files
 router.use('/js', (req, res) => {
-  console.log('🎨 [PIKBEST] JS route hit');
-  return proxyPikbestImages(req, res, 'pikbest.com');
+  console.log('🎨 [PIKBEST] JS route hit:', req.path);
+  return proxyPikbestImages(req, res, 'js.pikbest.com');
 });
 
+// ✅ Download handler (BEFORE CATCH-ALL)
+router.get('/', async (req, res) => {
+  if (req.query.m === 'download') {
+    console.log('📥 [PIKBEST] Download endpoint hit:', req.query);
+    const { id, flag } = req.query;
+    if (!id || !flag) {
+      return res.status(400).json({ error: 'Missing parameters' });
+    }
+    req.url = `/api/AjaxDownload/download?id=${id}&flag=${flag}`;
+    return proxyPikbestAPI(req, res);
+  }
+  return proxyPikbestWithAxios(req, res);
+});
 // ============================================
 // 🎭 CATCH-ALL FOR HTML PAGES (MUST BE LAST!)
 // ============================================
