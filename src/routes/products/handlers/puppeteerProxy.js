@@ -381,173 +381,113 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
 })();
 </script>`;
     // ✅ ADD FETCH INTERCEPTOR FOR FREEPIK & STORYBLOCKS
+    // ✅ ADD FETCH INTERCEPTOR FOR FREEPIK & STORYBLOCKS
     let fetchInterceptorScript = '';
     if (productConfig.name === 'freepik' || productConfig.name === 'storyblocks') {
+      // ✅ Use the actual product name dynamically
+      const productPrefix = `/${productConfig.name}`;
+
       fetchInterceptorScript = `
-<style>
-  /* Hide Freepik modals and overlays */
-  [role="dialog"],
-  [class*="modal"],
-  [class*="Modal"],
-  [class*="overlay"],
-  [class*="Overlay"] {
-    display: none !important;
-  }
-</style>
 <script>
 (function() {
-  console.log('🔧 [FREEPIK] Installing interceptors...');
+  const PRODUCT_PREFIX = '${productPrefix}'; // ✅ Dynamic product prefix
+  const PRODUCT_NAME = '${productConfig.name}'; // ✅ Dynamic product name
   
-
-// ✅ CRITICAL: Fix window.location.pathname for Freepik internal paths
-if (window.location.pathname.startsWith('/pikaso') ||
-    window.location.pathname.startsWith('/wepik') ||
-    window.location.pathname.startsWith('/slidesgo') ||
-    window.location.pathname.startsWith('/ai') ||
-    window.location.pathname.startsWith('/profile')) {
-  console.log('🔧 Path is already clean:', window.location.pathname);
-  // Path is correct, do nothing
-} else if (window.location.pathname.startsWith('/freepik/')) {
-  // Remove /freepik prefix from URL bar
-  const cleanPath = window.location.pathname.replace('/freepik', '');
-  console.log('🔧 Rewriting browser URL from', window.location.pathname, 'to', cleanPath);
-  window.history.replaceState({}, '', cleanPath + window.location.search + window.location.hash);
-}
-  // ✅ List of Freepik internal paths that should NOT be prefixed
-  const freepikInternalPaths = [
-    '/pikaso', '/wepik', '/slidesgo', '/ai',
-    '/profile', '/collections', '/projects',
-    '/pricing', '/popular', '/search', '/photos',
-    '/vectors', '/icons', '/psd', '/mockups'
-  ];
+  console.log('🔧 [' + PRODUCT_NAME.toUpperCase() + '] Installing interceptors...');
+  
+  // ✅ List of ${productConfig.name} internal paths that should NOT be prefixed
+  const internalPaths = ${JSON.stringify(productConfig.internalPaths || [])};
   
   function isInternalPath(url) {
-    return freepikInternalPaths.some(path => url.startsWith(path));
+    return internalPaths.some(path => url.startsWith(path));
   }
   
-  // ✅ MORE PRECISE 404 removal - find the specific overlay container
-  // ✅ AGGRESSIVE 404 removal - remove the ENTIRE 404 page structure
-const observer = new MutationObserver((mutations) => {
-  const body = document.body;
-  if (!body) return;
+  // ✅ Fix window.location.pathname
+  if (window.location.pathname.startsWith(PRODUCT_PREFIX + '/')) {
+    const cleanPath = window.location.pathname.replace(PRODUCT_PREFIX, '');
+    console.log('🔧 Rewriting browser URL from', window.location.pathname, 'to', cleanPath);
+    window.history.replaceState({}, '', cleanPath + window.location.search + window.location.hash);
+  }
+  
+  // ✅ Fetch interceptor
+  const originalFetch = window.fetch;
+  window.fetch = function(...args) {
+    let url = args[0];
+    console.log('🔍 [FETCH DEBUG] Original URL:', url, 'Type:', typeof url);
 
-  const text = body.innerText.toLowerCase();
-  if (text.includes('404') && text.includes("doesn't exist")) {
-    console.log('⚠️ 404 page detected, removing ENTIRE 404 structure...');
-
-    // Find ALL direct children of body
-    const bodyChildren = Array.from(document.body.children);
-
-    for (const child of bodyChildren) {
-      const childText = (child.innerText || '').toLowerCase();
-
-      // If this child contains 404 text, it's the 404 page container
-      if (childText.includes('404') && childText.includes("doesn't exist")) {
-        console.log('🗑️ Removing entire 404 page structure:', child.tagName, child.className);
-        child.remove(); // Remove the ENTIRE container
-        observer.disconnect();
-
-        // Force React to re-render the actual content
-        setTimeout(() => {
-          // Trigger a popstate event to force Next.js to re-render
-          window.dispatchEvent(new PopStateEvent('popstate'));
-        }, 100);
-
-        return;
+    if (typeof url === 'string') {
+      // ✅ SKIP if URL already has the product prefix
+      if (url.startsWith(PRODUCT_PREFIX + '/')) {
+        console.log('[FETCH SKIPPED - ALREADY PREFIXED]', url);
+        return originalFetch.apply(this, args);
       }
-    }
 
-    console.log('⚠️ Could not find 404 container');
-  }
-});
-  
-  // Start observing when DOM is ready
-  if (document.body) {
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true
-    });
-    console.log('👁️ MutationObserver started watching for 404 pages');
-  } else {
-    document.addEventListener('DOMContentLoaded', () => {
-      observer.observe(document.body, {
-        childList: true,
-        subtree: true
-      });
-      console.log('👁️ MutationObserver started watching for 404 pages');
-    });
-  }
-  
-  // ✅ INTERCEPT CLICKS ON LINKS
-  document.addEventListener('click', function(e) {
-    const link = e.target.closest('a');
-    if (link && link.href) {
-      const url = new URL(link.href, window.location.href);
-      if (url.origin === window.location.origin) {
-        console.log('[CLICK ALLOWED]', url.pathname);
-      }
-    }
-  }, true);
-  
-// ✅ Fetch interceptor
-const originalFetch = window.fetch;
-window.fetch = function(...args) {
-  let url = args[0];
-  console.log('🔍 [FETCH DEBUG] Original URL:', url, 'Type:', typeof url);
-
-  if (typeof url === 'string') {
-    // ✅ Check for /api/ calls FIRST
-    if (url.startsWith('/api/')) {
-      const newUrl = '/freepik' + url;
-      console.log('[FETCH INTERCEPTED API]', url, '→', newUrl);
-      args[0] = newUrl;
-      return originalFetch.apply(this, args);
-    }
-
-    if (url.startsWith('https://www.freepik.com/')) {
-      const path = url.replace('https://www.freepik.com', '');
-      if (isInternalPath(path)) {
-        console.log('[FETCH SKIPPED - INTERNAL - USING RELATIVE]', url, '→', path);
-        args[0] = path;
-      } else {
-        const newUrl = '/freepik' + path;
-        console.log('[FETCH INTERCEPTED ABSOLUTE]', url, '→', newUrl);
+      // ✅ Check for /api/ calls FIRST
+      if (url.startsWith('/api/')) {
+        const newUrl = PRODUCT_PREFIX + url;
+        console.log('[FETCH INTERCEPTED API]', url, '→', newUrl);
         args[0] = newUrl;
+        return originalFetch.apply(this, args);
       }
-    }
-    else if (url.startsWith('/') && !url.startsWith('/freepik') && !url.startsWith('/_next')) {
-      if (isInternalPath(url)) {
-        console.log('[FETCH SKIPPED - INTERNAL]', url);
-      } else {
-        const newUrl = '/freepik' + url;
+
+      // ✅ Handle download-ajax for Storyblocks
+      if (url.includes('download-ajax')) {
+        const newUrl = PRODUCT_PREFIX + url;
         console.log('[FETCH INTERCEPTED]', url, '→', newUrl);
         args[0] = newUrl;
+        return originalFetch.apply(this, args);
+      }
+
+      if (url.startsWith('https://www.' + PRODUCT_NAME + '.com/')) {
+        const path = url.replace('https://www.' + PRODUCT_NAME + '.com', '');
+        if (isInternalPath(path)) {
+          console.log('[FETCH SKIPPED - INTERNAL - USING RELATIVE]', url, '→', path);
+          args[0] = path;
+        } else {
+          const newUrl = PRODUCT_PREFIX + path;
+          console.log('[FETCH INTERCEPTED ABSOLUTE]', url, '→', newUrl);
+          args[0] = newUrl;
+        }
+      }
+      else if (url.startsWith('/') && !url.startsWith(PRODUCT_PREFIX) && !url.startsWith('/_next')) {
+        if (isInternalPath(url)) {
+          console.log('[FETCH SKIPPED - INTERNAL]', url);
+        } else {
+          const newUrl = PRODUCT_PREFIX + url;
+          console.log('[FETCH INTERCEPTED]', url, '→', newUrl);
+          args[0] = newUrl;
+        }
       }
     }
-  }
-  return originalFetch.apply(this, args);
-};
+    return originalFetch.apply(this, args);
+  };
   
   // ✅ XHR interceptor
   const originalOpen = XMLHttpRequest.prototype.open;
   XMLHttpRequest.prototype.open = function(method, url, ...rest) {
     if (typeof url === 'string') {
-      if (url.startsWith('https://www.freepik.com/')) {
-        const path = url.replace('https://www.freepik.com', '');
+      // ✅ SKIP if URL already has the product prefix
+      if (url.startsWith(PRODUCT_PREFIX + '/')) {
+        console.log('[XHR SKIPPED - ALREADY PREFIXED]', url);
+        return originalOpen.call(this, method, url, ...rest);
+      }
+
+      if (url.startsWith('https://www.' + PRODUCT_NAME + '.com/')) {
+        const path = url.replace('https://www.' + PRODUCT_NAME + '.com', '');
         if (isInternalPath(path)) {
           console.log('[XHR SKIPPED - INTERNAL - USING RELATIVE]', url, '→', path);
           url = path;
         } else {
-          const newUrl = '/freepik' + path;
+          const newUrl = PRODUCT_PREFIX + path;
           console.log('[XHR INTERCEPTED ABSOLUTE]', url, '→', newUrl);
           url = newUrl;
         }
       }
-      else if (url.startsWith('/') && !url.startsWith('/freepik') && !url.startsWith('/_next')) {
+      else if (url.startsWith('/') && !url.startsWith(PRODUCT_PREFIX) && !url.startsWith('/_next')) {
         if (isInternalPath(url)) {
           console.log('[XHR SKIPPED - INTERNAL]', url);
         } else {
-          const newUrl = '/freepik' + url;
+          const newUrl = PRODUCT_PREFIX + url;
           console.log('[XHR INTERCEPTED]', url, '→', newUrl);
           url = newUrl;
         }
