@@ -30,7 +30,36 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
     // Get premium cookies from API
     const apiData = await getDataFromApiWithoutVerify(prefix);
     let cookiesArray = apiData.access_configuration_preferences[0].accounts[0];
+    // ✅ PARSE LOCALSTORAGE FROM API
+    // ✅ PARSE LOCALSTORAGE FROM API
+    let localStorageData = {};
+    try {
+      const lsArray = apiData.access_configuration_preferences[0].localstorage;
+      if (lsArray && lsArray.length > 0) {
+        let lsString = lsArray[0];
 
+        // Handle if it's a stringified JSON object
+        if (typeof lsString === 'string') {
+          // Remove outer quotes if present
+          if (lsString.startsWith('"') && lsString.endsWith('"')) {
+            lsString = lsString.slice(1, -1);
+          }
+
+          // Unescape escaped quotes
+          lsString = lsString.replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+
+          localStorageData = JSON.parse(lsString);
+          console.log('📦 Parsed', Object.keys(localStorageData).length, 'localStorage keys from API');
+        } else if (typeof lsString === 'object') {
+          // Already an object
+          localStorageData = lsString;
+          console.log('📦 Loaded', Object.keys(localStorageData).length, 'localStorage keys from API (already object)');
+        }
+      }
+    } catch (e) {
+      console.error('❌ Failed to parse localStorage:', e.message);
+      console.error('❌ Raw localStorage value:', apiData.access_configuration_preferences[0].localstorage?.[0]?.substring(0, 100));
+    }
     // Parse cookies if stored as string
     if (typeof cookiesArray === 'string') {
       try {
@@ -63,11 +92,6 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
     if (!requestPath.startsWith('/')) {
       requestPath = '/' + requestPath;
     }
-    // ✅ CRITICAL FIX FOR FREEPIK: Remove /freepik prefix if this is a direct Freepik path
-    // if (req._freepikDirectPath && requestPath.startsWith('/freepik/')) {
-    //   requestPath = requestPath.substring(8); // Remove '/freepik'
-    //   console.log('🎨 [FREEPIK DIRECT] Removed prefix, using:', requestPath);
-    // }
 
     // Build target URL
     const targetUrl = `https://${productConfig.domain}${requestPath}`;
@@ -276,6 +300,21 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
 
       await page.setCookie(...freepikCookies);
       console.log('✅ Set', freepikCookies.length, 'Freepik cookies BEFORE load');
+
+      // ✅ INJECT LOCALSTORAGE FOR FREEPIK BEFORE PAGE LOADS
+      if (Object.keys(localStorageData).length > 0) {
+        await page.evaluateOnNewDocument((lsData) => {
+          Object.keys(lsData).forEach(key => {
+            try {
+              localStorage.setItem(key, lsData[key]);
+            } catch (e) {
+              console.error('❌ [LS]', key.substring(0, 30));
+            }
+          });
+        }, localStorageData);
+
+        console.log('✅ Injected', Object.keys(localStorageData).length, 'localStorage items into Puppeteer context');
+      }
     } else {
       await page.setCookie(...puppeteerCookies);
       console.log('✅ Set', puppeteerCookies.length, 'cookies BEFORE load');
@@ -311,26 +350,21 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
         timeout: 30000
       });
       console.log('✅ Page loaded WITH COOKIES');
-      console.log('📊 Response status:', response.status()); // ✅ ADD THIS
-      console.log('📊 Response URL:', response.url());       // ✅ ADD THIS
+      console.log('📊 Response status:', response.status());
+      console.log('📊 Response URL:', response.url());
+
       // ✅ Get content type FIRST
       const contentType = response.headers()['content-type'] || '';
       console.log('📄 Content-Type:', contentType);
 
-      // ✅ Check if this is an asset request (handles query params like ?ver=3.7.1)
-      // Very aggressive detection for all possible asset types
+      // ✅ Check if this is an asset request
       const isAssetRequest =
-        // File extension based detection
         /\.(js|css|jpg|jpeg|png|gif|webp|svg|woff|woff2|ttf|eot|ico|json|map)(\?.*)?$/i.test(requestPath) ||
-        // WordPress specific paths
         requestPath.includes('/wp-content/') ||
         requestPath.includes('/wp-includes/') ||
         requestPath.includes('/uploads/') ||
-        // Common asset directory patterns
         requestPath.match(/\/(js|css|fonts|assets|images|static|dist|build)\//i) ||
-        // Common JavaScript/CSS file patterns (even without directory)
         requestPath.match(/\.(min\.)?(js|css)(\?|$)/i) ||
-        // WordPress theme/plugin patterns
         requestPath.includes('/themes/') ||
         requestPath.includes('/plugins/') ||
         requestPath.includes('/cache/') ||
@@ -375,7 +409,6 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
         throw error;
       }
     }
-    // ✅ IMPROVED URL REWRITING
 
     // Get page content
     let html = await page.content();
@@ -385,7 +418,6 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
       console.log('   🔧 [FREEPIK] Detected 404 page - removing 404 content from HTML');
 
       // Remove the 404 overlay container from the HTML entirely
-      // This prevents React hydration errors
       html = html.replace(
         /<div[^>]*class="[^"]*relative[^"]*flex[^"]*size-full[^"]*"[^>]*>[\s\S]*?Oops![\s\S]*?doesn't exist[\s\S]*?<\/div>/gi,
         '<!-- 404 removed by proxy -->'
@@ -393,6 +425,7 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
 
       console.log('   ✅ Removed 404 HTML before sending to browser');
     }
+
     // ✅ INJECT COOKIES INTO USER'S BROWSER
     console.log('🍪 Injecting cookies into HTML...');
 
@@ -401,14 +434,32 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
 (function() {
   console.log('🍪 Setting cookies IMMEDIATELY...');
   ${puppeteerCookies.map(cookie =>
-      // ✅ FIX: Set cookies for current domain (dev-server.primewp.net), NOT freepik.com
       `document.cookie = '${cookie.name}=${cookie.value}; path=/; samesite=Lax';`
     ).join('\n  ')}
   console.log('✅ Cookies set BEFORE page render!');
 })();
 </script>`;
 
-    // ✅ CREATE FETCH INTERCEPTOR SCRIPT
+    // ✅ ADD LOCALSTORAGE SCRIPT FOR FREEPIK
+    const localStorageScript = (productConfig.name === 'freepik' && Object.keys(localStorageData).length > 0) ? `
+<script>
+(function() {
+  console.log('💾 [FREEPIK LS] Injecting localStorage...');
+  const lsData = ${JSON.stringify(localStorageData)};
+  
+  Object.keys(lsData).forEach(key => {
+    try {
+      localStorage.setItem(key, lsData[key]);
+    } catch (e) {
+      console.error('❌ [LS] Failed:', key.substring(0, 50));
+    }
+  });
+  
+  console.log('✅ [FREEPIK LS] Set', Object.keys(lsData).length, 'items');
+})();
+</script>` : '';
+
+    // ✅ CREATE FETCH INTERCEPTOR SCRIPT - FIXED FOR FREEPIK!
     let fetchInterceptorScript = '';
     if (productConfig.name === 'freepik' || productConfig.name === 'storyblocks') {
       const productPrefix = `/${productConfig.name}`;
@@ -427,11 +478,24 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
     return internalPaths.some(path => url.startsWith(path));
   }
   
-  if (window.location.pathname.startsWith(PRODUCT_PREFIX + '/')) {
-    const cleanPath = window.location.pathname.replace(PRODUCT_PREFIX, '');
-    console.log('🔧 Rewriting browser URL from', window.location.pathname, 'to', cleanPath);
-    window.history.replaceState({}, '', cleanPath + window.location.search + window.location.hash);
-  }
+  // ✅ CRITICAL FIX: Rewrite URL IMMEDIATELY - SYNCHRONOUSLY BEFORE ANY OTHER SCRIPTS!
+  (function() {
+    const currentPath = window.location.pathname;
+    if (currentPath.startsWith(PRODUCT_PREFIX + '/')) {
+      const cleanPath = currentPath.substring(PRODUCT_PREFIX.length);
+      console.log('🔧 [IMMEDIATE URL FIX]', currentPath, '→', cleanPath);
+      
+      // This runs SYNCHRONOUSLY before React loads
+      const newUrl = cleanPath + window.location.search + window.location.hash;
+      history.replaceState(null, '', newUrl);
+      
+      // Force pathname to update
+      Object.defineProperty(window.location, '_pathname', {
+        value: cleanPath,
+        writable: false
+      });
+    }
+  })();
   
   const originalFetch = window.fetch;
   window.fetch = function(...args) {
@@ -501,18 +565,18 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
 </script>`;
     }
 
-    // ✅ INJECT COOKIE SCRIPT FIRST, THEN INTERCEPTOR
+    // ✅ INJECT SCRIPTS AT THE VERY TOP OF <head> - URL FIX MUST RUN FIRST!
     if (html.includes('<head>')) {
-      html = html.replace('<head>', `<head>${cookieScript}${fetchInterceptorScript}`);
-      console.log('   ✅ Injected cookies FIRST, then interceptor');
+      // The order matters: localStorage FIRST, then URL fix, then cookies, then fetch interceptor
+      html = html.replace('<head>', `<head>${localStorageScript}${fetchInterceptorScript}${cookieScript}`);
+      console.log('   ✅ Injected scripts in correct order: localStorage → URL fix → cookies → interceptor');
+
     } else if (html.includes('</head>')) {
-      html = html.replace('</head>', `${cookieScript}${fetchInterceptorScript}</head>`);
+      html = html.replace('</head>', `${fetchInterceptorScript}${cookieScript}</head>`);
       console.log('   ✅ Injected scripts at end of <head>');
     } else {
       console.log('   ⚠️ No <head> tag found');
     }
-
-
 
     // ✅ ADD THIS - Check if page shows logged in content
     if (html.includes('Sign in') || html.includes('Log in')) {
@@ -525,20 +589,18 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
     if (html.includes('logout') || html.includes('profile') || html.includes('account')) {
       console.log('✅ HTML contains logout/profile indicators - likely logged in');
     }
+
     const localProxyBase = `${protocol}://${req.get('host')}${productPrefix}`;
 
     // ✅ ONLY replace domain URLs in HTML content, NOT in our injected scripts
-    // Find the end of our injected scripts
     if (productConfig.name !== 'freepik') {
       const scriptEndMarker = '✅ Interceptors installed';
       const scriptEndIndex = html.indexOf(scriptEndMarker);
 
       if (scriptEndIndex > 0) {
-        // Split: everything before our script stays untouched
-        const beforeScripts = html.substring(0, scriptEndIndex + scriptEndMarker.length + 20); // +20 to include closing tags
+        const beforeScripts = html.substring(0, scriptEndIndex + scriptEndMarker.length + 20);
         const afterScripts = html.substring(scriptEndIndex + scriptEndMarker.length + 20);
 
-        // Only replace in the part AFTER our scripts
         const afterReplaced = afterScripts.replace(
           new RegExp(`https://${productConfig.domain.replace(/\./g, '\\.')}`, 'g'),
           localProxyBase
@@ -547,7 +609,6 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
         html = beforeScripts + afterReplaced;
         console.log('   ✅ Protected interceptor from domain replacement');
       } else {
-        // Fallback - no interceptor found, replace everywhere
         html = html.replace(
           new RegExp(`https://${productConfig.domain.replace(/\./g, '\\.')}`, 'g'),
           localProxyBase
@@ -556,6 +617,7 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
     } else {
       console.log('   ⚠️ Skipping domain replacement for Freepik');
     }
+
     // 🔥 CONDITIONAL BASE TAG - Skip for Epidemic Sound, Freepik & Storyblocks
     if (productConfig.name !== 'epidemicsound' &&
       productConfig.name !== 'freepik' &&
@@ -571,79 +633,16 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
       console.log('   ⚠️ Skipped base tag for', productConfig.name);
     }
 
-
-    // 🔥 FOR STORYBLOCKS: DO NOTHING - Let pages load as-is
-    if (productConfig.name === 'storyblocks') {
-      console.log('   🔧 Storyblocks mode: Leaving HTML untouched (no URL rewriting)');
-      // Don't modify anything - let fetch interceptor handle it all
-    }
-    else if (productConfig.name === 'freepik') {
-      console.log('   🔧 Freepik mode: NO URL REWRITING - Let interceptor handle everything');
-      // console.log('   🔧 Freepik mode: Fixing URLs');
-
-      // const prefix = '/freepik';
-
-      // // ✅ List of Freepik's internal routes that should NOT get prefix
-      // const freepikInternalPaths = [
-      //   'pikaso', 'wepik', 'slidesgo', 'ai',
-      //   'profile', 'collections', 'projects',
-      //   'pricing', 'popular', 'search', 'photos',
-      //   'vectors', 'icons', 'psd', 'mockups'
-      // ];
-
-      // // ✅ Add prefix to navigation links EXCEPT internal Freepik paths
-      // html = html.replace(
-      //   /href="\/([^"]*?)"/g,
-      //   (match, path) => {
-      //     // Skip if already has prefix, or is anchor/mailto/http
-      //     if (path.startsWith('freepik') || path.startsWith('#') ||
-      //       path.startsWith('mailto:') || path.startsWith('http')) {
-      //       return match;
-      //     }
-
-      //     // ✅ Check if this is a Freepik internal path
-      //     const firstSegment = path.split('/')[0].split('?')[0];
-      //     if (freepikInternalPaths.includes(firstSegment)) {
-      //       console.log('   ⚠️ Skipping internal path:', path);
-      //       return match; // Don't add prefix to internal Freepik routes
-      //     }
-
-      //     return `href="${prefix}/${path}"`;
-      //   }
-      // );
-
-      // html = html.replace(
-      //   /href='\/([^']*?)'/g,
-      //   (match, path) => {
-      //     if (path.startsWith('freepik') || path.startsWith('#') ||
-      //       path.startsWith('mailto:') || path.startsWith('http')) {
-      //       return match;
-      //     }
-
-      //     const firstSegment = path.split('/')[0].split('?')[0];
-      //     if (freepikInternalPaths.includes(firstSegment)) {
-      //       return match;
-      //     }
-
-      //     return `href='${prefix}/${path}'`;
-      //   }
-      // );
-
-      // // ✅ REMOVE prefix from asset sources
-      // html = html.replace(new RegExp(`src="${prefix}/`, 'g'), 'src="/');
-      // html = html.replace(new RegExp(`src='${prefix}/`, 'g'), "src='/");
-
-      // console.log('   ✅ Fixed Freepik URLs - preserved internal paths');
+    // 🔥 FOR STORYBLOCKS & FREEPIK: DO NOTHING - Let interceptor handle everything
+    if (productConfig.name === 'storyblocks' || productConfig.name === 'freepik') {
+      console.log(`   🔧 ${productConfig.displayName} mode: NO URL REWRITING - Let interceptor handle everything`);
     }
     else {
       // Normal rewriting for other products
-
-      // 2. Fix API calls and manifest in JavaScript/JSON
       html = html.replace(/["']\/api\//g, `"${productPrefix}/api/`);
       html = html.replace(/["']\/session\//g, `"${productPrefix}/session/`);
       html = html.replace(/["']\/manifest\.json/g, `"${productPrefix}/manifest.json`);
 
-      // 💥 Critical: Fix internal navigation links
       html = html.replace(/href="\/(?!static|cdn|img|image|api)([^"]+)"/g, `href="${productPrefix}/$1"`);
       html = html.replace(/href='\/(?!static|cdn|img|image|api)([^']+)'/g, `href='${productPrefix}/$1'`);
 
@@ -662,7 +661,6 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
       html = html.replace(/url\("\/(?!\/)/g, `url("${productPrefix}/`);
       html = html.replace(/url\('\/(?!\/)/g, `url('${productPrefix}/`);
 
-      // 4. Fix localhost/production HTTPS references
       const currentHost = req.get('host');
       if (isLocalhost) {
         html = html.replace(/https:\/\/localhost:8224/g, 'http://localhost:8224');
@@ -672,7 +670,7 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
       }
     }
 
-    // 5. Fix double slashes
+    // Fix double slashes
     html = html.replace(new RegExp(`${productPrefix}${productPrefix}`, 'g'), productPrefix);
 
     console.log('   ✅ URL rewriting complete');
@@ -694,6 +692,8 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
     });
   }
 }
+
+// ... rest of the file stays the same ...
 
 /**
  * Proxy assets (CSS, JS, images) using Puppeteer browser

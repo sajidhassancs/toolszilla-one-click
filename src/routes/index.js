@@ -517,7 +517,17 @@ router.use('/admin', adminRoutes);
 router.use('/media', (req, res) => {
   return handleMediaProxy(req, res, flaticonConfig, 'media.flaticon.com');
 });
+// ✅ CRITICAL: Route _next requests to Freepik if Freepik cookie is set
+router.use('/_next', (req, res, next) => {
+  const productCookie = req.cookies.product || '';
 
+  if (productCookie === 'freepik') {
+    console.log(`🔀 [_NEXT FIX] /_next → /freepik/_next`);
+    req.url = `/freepik${req.url}`;
+  }
+
+  next();
+});
 // ✅ HANDLE ROOT-LEVEL API ROUTES (BEFORE AUTO-ROUTER!)
 // ✅ HANDLE ROOT-LEVEL API ROUTES (BEFORE AUTO-ROUTER!)
 router.use((req, res, next) => {

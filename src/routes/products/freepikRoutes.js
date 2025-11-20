@@ -22,6 +22,7 @@ import {
 import { proxyAssetWithPuppeteer } from './handlers/puppeteerProxy.js';
 import { proxyFreepikWithAxios } from './handlers/freepikAxiosProxy.js';
 const router = express.Router();
+import axios from 'axios';
 
 console.log('🎨 [FREEPIK] Router initialized');
 // Limit reached page
@@ -96,6 +97,7 @@ router.all(/^\/cdn-cgi\/.*$/, (req, res) => {
 // ============================================
 // ✅ STATIC ASSETS
 // ============================================
+
 router.use('/_next', (req, res) => {
   console.log('📦 [NEXT.JS] Static file:', req.originalUrl);
   return proxyAssetWithPuppeteer(req, res, freepikConfig, 'www.freepik.com');
