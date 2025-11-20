@@ -588,38 +588,38 @@ router.get('/manifest.webmanifest', (req, res) => {
 // ============================================
 // ✅ FREEPIK: SERVE INTERNAL PATHS DIRECTLY (NO /freepik PREFIX!)
 // ============================================
-router.use((req, res, next) => {
-  const productCookie = req.cookies.product || '';
+// router.use((req, res, next) => {
+//   const productCookie = req.cookies.product || '';
 
-  // Only process if Freepik cookie is set
-  if (productCookie !== 'freepik') {
-    return next();
-  }
+//   // Only process if Freepik cookie is set
+//   if (productCookie !== 'freepik') {
+//     return next();
+//   }
 
-  // List of Freepik internal paths that should be served DIRECTLY
-  const freepikInternalPaths = [
-    '/pikaso', '/wepik', '/slidesgo', '/ai',
-    '/profile', '/collections', '/projects',
-    '/pricing', '/popular', '/search', '/photos',
-    '/vectors', '/icons', '/psd', '/mockups'
-  ];
+//   // List of Freepik internal paths that should be served DIRECTLY
+//   const freepikInternalPaths = [
+//     '/pikaso', '/wepik', '/slidesgo', '/ai',
+//     '/profile', '/collections', '/projects',
+//     '/pricing', '/popular', '/search', '/photos',
+//     '/vectors', '/icons', '/psd', '/mockups'
+//   ];
 
-  // Check if this is a Freepik internal path
-  const isInternalPath = freepikInternalPaths.some(path =>
-    req.url === path || req.url.startsWith(path + '/') ||
-    req.url.startsWith(path + '?') || req.url.startsWith(path + '#')
-  );
+//   // Check if this is a Freepik internal path
+//   const isInternalPath = freepikInternalPaths.some(path =>
+//     req.url === path || req.url.startsWith(path + '/') ||
+//     req.url.startsWith(path + '?') || req.url.startsWith(path + '#')
+//   );
 
-  if (isInternalPath) {
-    // ✅ CRITICAL: Add /freepik for routing BUT flag it for removal before Puppeteer
-    console.log(`🎨 [FREEPIK DIRECT] Flagging ${req.url} to be served without /freepik prefix`);
-    req._freepikDirectPath = true; // Flag for Puppeteer handler
-    req._freepikOriginalPath = req.url; // Save original path
-    req.url = `/freepik${req.url}`; // Add prefix for routing
-  }
+//   if (isInternalPath) {
+//     // ✅ CRITICAL: Add /freepik for routing BUT flag it for removal before Puppeteer
+//     console.log(`🎨 [FREEPIK DIRECT] Flagging ${req.url} to be served without /freepik prefix`);
+//     req._freepikDirectPath = true; // Flag for Puppeteer handler
+//     req._freepikOriginalPath = req.url; // Save original path
+//     req.url = `/freepik${req.url}`; // Add prefix for routing
+//   }
 
-  next();
-});
+//   next();
+// });
 // ============================================
 // ✅ FIXED AUTO-ROUTER - NO MORE DOUBLE PREFIXING!
 // ============================================
@@ -680,27 +680,34 @@ router.use((req, res, next) => {
     console.log(`🔀 [AUTO-ROUTER] ${req.url} → /envato${req.url}`);
     req.url = `/envato${req.url}`;
   }
+
   else if (referer.includes('/freepik') || productCookie === 'freepik') {
-    // ✅ List of Freepik internal paths that should NOT be prefixed
-    const freepikInternalPaths = [
-      '/pikaso', '/wepik', '/slidesgo', '/ai',
-      '/profile', '/collections', '/projects',
-      '/pricing', '/popular', '/search'
-    ];
-
-    // Check if this is a Freepik internal path
-    const isInternalPath = freepikInternalPaths.some(path =>
-      req.url === path || req.url.startsWith(path + '/') || req.url.startsWith(path + '?') || req.url.startsWith(path + '#')
-    );
-
-    if (isInternalPath) {
-      console.log(`🎨 [AUTO-ROUTER] Freepik internal path detected, NOT adding prefix:`, req.url);
-      // Don't add /freepik prefix - these are handled by Freepik's own routing
-    } else {
-      console.log(`🔀 [AUTO-ROUTER] ${req.url} → /freepik${req.url}`);
-      req.url = `/freepik${req.url}`;
-    }
+    console.log(`🔀 [AUTO-ROUTER] ${req.url} → /freepik${req.url}`);
+    req.url = `/freepik${req.url}`;
   }
+  // else if (referer.includes('/freepik') || productCookie === 'freepik') {
+  //   // ✅ List of Freepik internal paths that should NOT be prefixed
+  //   const freepikInternalPaths = [
+  //     '/pikaso', '/wepik', '/slidesgo', '/ai',
+  //     '/profile', '/collections', '/projects',
+  //     '/pricing', '/popular', '/search'
+  //   ];
+
+  //   // Check if this is a Freepik internal path
+  //   const isInternalPath = freepikInternalPaths.some(path =>
+  //     req.url === path || req.url.startsWith(path + '/') || req.url.startsWith(path + '?') || req.url.startsWith(path + '#')
+  //   );
+
+  //   if (isInternalPath) {
+  //     console.log(`🎨 [AUTO-ROUTER] Freepik internal path detected, NOT adding prefix:`, req.url);
+  //     // Don't add /freepik prefix - these are handled by Freepik's own routing
+  //   } else {
+  //     console.log(`🔀 [AUTO-ROUTER] ${req.url} → /freepik${req.url}`);
+  //     req.url = `/freepik${req.url}`;
+  //   }
+  // }
+
+
   else if (referer.includes('/stealthwriter') || productCookie === 'stealthwriter') {
     console.log(`🔀 [AUTO-ROUTER] ${req.url} → /stealthwriter${req.url}`);
     req.url = `/stealthwriter${req.url}`;
@@ -742,7 +749,16 @@ router.use((req, res, next) => {
 //   }
 //   next();
 // });
-
+// ✅ DEBUG: Log what's happening with Freepik requests
+router.use((req, res, next) => {
+  if (req.cookies.product === 'freepik') {
+    console.log('🐛 [DEBUG] Freepik request after auto-router:');
+    console.log('   URL:', req.url);
+    console.log('   Original URL:', req.originalUrl);
+    console.log('   Cookies:', req.cookies);
+  }
+  next();
+});
 // ============================================
 // PRODUCT ROUTES (MUST BE LAST!)
 // ============================================

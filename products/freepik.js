@@ -13,13 +13,40 @@ export default {
   redirectPath: '/',
 
   // Banned paths (product-specific, env vars will also apply)
-  bannedPaths: [],  // ✅ Empty - we're using BANNED_URL_PATHS from .env
+  bannedPaths: [],
 
   // Proxy port (if running standalone)
   proxyPort: 8224,
 
   // Use external proxy server
   useExternalProxy: false,
+
+  // ✅ ADD THIS - Internal paths that should NOT get /freepik prefix
+  internalPaths: [
+    '/api/',           // ← All API calls
+    '/pikaso/',        // ← Pikaso routes
+    '/wepik/',
+    '/slidesgo/',
+    '/ai/',
+    '/profile/',
+    '/collections/',
+    '/projects/',
+    '/pricing',
+    '/popular',
+    '/search',
+    '/photos',
+    '/vectors',
+    '/icons',
+    '/psd',
+    '/mockups',
+    '/_next/',         // ← Next.js internal
+    '/static/',        // ← Static assets
+    '/cdn/',
+    '/manifest.json',
+    '/cdn-cgi',        // ✅ ADD THIS
+    '/user/preferences', // ✅ ADD THIS
+    '/user/settings',
+  ],
 
   // Domain replacement rules [find, replace]
   replaceRules: [

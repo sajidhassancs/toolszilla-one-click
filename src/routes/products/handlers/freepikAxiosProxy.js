@@ -36,7 +36,7 @@ export async function proxyFreepikWithAxios(req, res) {
         // Make request
         const response = await axios({
             method: req.method,
-            url: targetUrl,  // ← FIX #1: Use dynamic URL, not hardcoded!
+            url: targetUrl,
             headers: {
                 'accept': '*/*',
                 'accept-language': 'en-US,en;q=0.9',
@@ -49,7 +49,7 @@ export async function proxyFreepikWithAxios(req, res) {
                 'sec-fetch-mode': 'cors',
                 'sec-fetch-site': 'same-origin',
                 'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36',
-                'cookie': cookieString  // ← FIX #2: Use dynamic cookies, not hardcoded!
+                'cookie': cookieString
             },
             data: req.body,
             validateStatus: () => true,
@@ -66,37 +66,55 @@ export async function proxyFreepikWithAxios(req, res) {
         // Handle HTML
         if (contentType.includes('text/html')) {
             let html = response.data.toString('utf-8');
-
             console.log('🔧 Rewriting Freepik HTML...');
-
-            // ✅ CRITICAL: Inject URL fix script BEFORE React loads
             const urlFixScript = `
 <script>
-(function() {
-  console.log('🔧 [FREEPIK] Fixing window.location...');
-  
-  // Remove /freepik prefix from URL bar if present
-  if (window.location.pathname.startsWith('/freepik/')) {
-    const cleanPath = window.location.pathname.replace('/freepik', '');
-    console.log('🔧 URL rewrite:', window.location.pathname, '→', cleanPath);
-    window.history.replaceState({}, '', cleanPath + window.location.search + window.location.hash);
-  }
-  
-  console.log('✅ URL fixed, path is now:', window.location.pathname);
-})();
+console.log('🔧 [FREEPIK] Proxy active');
 </script>
 `;
+            // ✅ ONLY inject the fetch interceptor - NO URL rewriting!
+            //             const urlFixScript = `
+            // <script>
+            // (function() {
+            //   console.log('🔧 [FREEPIK] Installing fetch interceptor...');
 
-            // ✅ Inject RIGHT AFTER <head> tag (before React loads)
+            //   // ✅ INTERCEPT ALL FETCH CALLS
+            //   const originalFetch = window.fetch;
+            //   window.fetch = function(url, options) {
+            //     let urlString = typeof url === 'string' ? url : url.toString();
+
+            //     console.log('🔄 [FETCH]', urlString);
+
+            //     // If it's an absolute freepik.com URL, make it relative
+            //     if (urlString.includes('freepik.com')) {
+            //       try {
+            //         const urlObj = new URL(urlString);
+            //         urlString = urlObj.pathname + urlObj.search + urlObj.hash;
+            //         console.log('   → Converted to:', urlString);
+            //       } catch (e) {
+            //         // Already relative, keep as-is
+            //       }
+            //     }
+
+            //     return originalFetch(urlString, options);
+            //   };
+
+            //   console.log('✅ Fetch interceptor installed');
+            // })();
+            // </script>
+            // `;
+
+            // ✅ Inject script
             if (html.includes('<head>')) {
                 html = html.replace('<head>', `<head>${urlFixScript}`);
-                console.log('   ✅ Injected URL fix script');
+                console.log('   ✅ Injected fetch interceptor');
             }
 
-            // Replace domain URLs
-            html = html.replace(/https:\/\/www\.freepik\.com/g, `${currentHost}/freepik`);
-            html = html.replace(/https:\/\/cdn\.freepik\.com/g, `${currentHost}/freepik/cdn`);
-            html = html.replace(/https:\/\/cdnb\.freepik\.com/g, `${currentHost}/freepik/cdnb`);
+            // ✅ ONLY rewrite static.cdnpk.net for assets
+            html = html.replace(/https:\/\/static\.cdnpk\.net/g, `${req.protocol}://${req.get('host')}/freepik/static-cdnpk`);
+
+            // ❌ REMOVE ALL OTHER URL REWRITES - Let fetch interceptor handle them!
+            // DON'T rewrite www.freepik.com URLs in HTML anymore
 
             console.log('   ✅ HTML rewriting complete');
 

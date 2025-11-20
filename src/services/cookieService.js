@@ -17,7 +17,7 @@ export async function getPremiumCookies(prefix, index = 0, includeProxy = false)
   // Check cache first
   const cacheKey = `${prefix}_${index}`;
   const cached = getCache('premiumCookies', cacheKey);
-  
+
   if (cached) {
     return {
       cookies: cached.cookies,
@@ -30,7 +30,7 @@ export async function getPremiumCookies(prefix, index = 0, includeProxy = false)
     const data = await getDataFromApiWithoutVerify(prefix);
 
     const cookiesStr = data.access_configuration_preferences[0].accounts[index];
-    
+
     // Parse cookies
     const cookies = parseCookieString(cookiesStr);
 
@@ -178,10 +178,10 @@ export async function decryptUserCookiesNoSessionCheck(req) {
 async function checkDashboardSession(email, authToken) {
   try {
     console.log('🔍 Checking dashboard session for:', email);
-    
-    const url = `${process.env.DASHBOARD_URL}/api/oneclick/session-check`;
+
+    const url = `${process.env.API_URL}/oneclick/session-check`;
     console.log('📞 Calling:', url);
-    
+
     const response = await axios.post(url, {
       email: email
     }, {
@@ -203,11 +203,11 @@ async function checkDashboardSession(email, authToken) {
       return false;
     }
 
-    const isValid = response.data.valid === true && 
-                   response.data.email === email;
+    const isValid = response.data.valid === true &&
+      response.data.email === email;
 
     console.log(isValid ? '✅ Session valid' : '❌ Session invalid');
-    
+
     return isValid;
 
   } catch (error) {

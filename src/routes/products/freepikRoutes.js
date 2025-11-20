@@ -29,8 +29,39 @@ router.get('/limit-reached', (req, res) => {
   return showLimitReachedPage(req, res, freepikConfig.displayName, 'default');
 });
 
+// router.use((req, res, next) => {
+//   const productCookie = req.cookies.product || '';
+
+//   // Only process if Freepik cookie is set
+//   if (productCookie !== 'freepik') {
+//     return next();
+//   }
+
+//   // List of Freepik internal paths that should be served DIRECTLY
+//   const freepikInternalPaths = [
+//     '/pikaso', '/wepik', '/slidesgo', '/ai',
+//     '/profile', '/collections', '/projects',
+//     '/pricing', '/popular', '/search', '/photos',
+//     '/vectors', '/icons', '/psd', '/mockups'
+//   ];
+
+//   // Check if this is a Freepik internal path
+//   const isInternalPath = freepikInternalPaths.some(path =>
+//     req.url === path || req.url.startsWith(path + '/') ||
+//     req.url.startsWith(path + '?') || req.url.startsWith(path + '#')
+//   );
+
+//   if (isInternalPath) {
+//     console.log(`🎨 [FREEPIK DIRECT] Flagging ${req.url} to be served without /freepik prefix`);
+//     req._freepikDirectPath = true;
+//     req._freepikOriginalPath = req.url;
+//     req.url = `/freepik${req.url}`;  // ← This adds /freepik prefix
+//   }
+
+//   next();
+// });
 // ============================================
-// ✅ API ROUTES (MUST BE FIRST!)
+// ✅ API ROUTES (MUST BE AFTER OPTIONS!)
 // ============================================
 router.use('/pikaso/api', (req, res) => {
   console.log('🎨 [PIKASO API] Route hit:', req.originalUrl);
@@ -119,7 +150,7 @@ router.use('/fonts', (req, res) => {
 // ============================================
 router.use((req, res) => {
   console.log('🎨 [FREEPIK] Catch-all:', req.url);
-  return proxyFreepikWithAxios(req, res);  // ← Changed from Puppeteer to Axios
+  return proxyFreepikWithPuppeteer(req, res);  // ← Changed from Puppeteer to Axios
 });
 
 export default router;

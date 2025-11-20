@@ -1,11 +1,16 @@
 /**
- * StealthWriter Specific Handlers
- * Base tag + No caching
+ * StealthWriter Handlers with Queue System
+ * Base tag + No caching + Queue for /api/humanize
  */
 import axios from 'axios';
 import { decryptUserCookiesNoSessionCheck } from '../../../services/cookieService.js';
 import { getDataFromApiWithoutVerify } from '../../../services/apiService.js';
 import { USER_AGENT } from '../../../utils/constants.js';
+import {
+  addQueueJob,
+  getJobByEmail,
+  getQueueStatus
+} from '../../../services/stealthWriterQueue.js';
 
 export async function getUserCookieString(req) {
   try {
@@ -33,6 +38,96 @@ export async function getUserCookieString(req) {
     return null;
   }
 }
+
+/**
+ * Handle /api/humanize and /api/humanize/alternatives with queue
+ */
+export async function handleHumanizeRequest(req, res) {
+  try {
+    console.log('✍️ [HUMANIZE] Request received');
+
+    // Get user data
+    const userData = await decryptUserCookiesNoSessionCheck(req);
+    if (userData.redirect) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const userEmail = userData.user_email || 'unknown@email.com';
+    const requestData = req.body;
+
+    console.log(`   User: ${userEmail}`);
+    console.log(`   Request type: ${req.originalUrl.includes('alternatives') ? 'alternatives' : 'humanize'}`);
+
+    // Add request type to data so processor knows which endpoint to use
+    requestData._endpoint = req.originalUrl.includes('alternatives') ? 'alternatives' : 'humanize';
+
+    // Add to queue
+    const added = await addQueueJob(userEmail, requestData);
+
+    if (!added) {
+      const queueStatus = await getQueueStatus();
+      return res.status(429).json({
+        error: 'You already have a job in the queue. Please wait.',
+        queue: queueStatus
+      });
+    }
+
+    console.log(`✅ Added to queue for ${userEmail}`);
+
+    // Poll for completion
+    const timeout = 300000; // 5 minutes
+    const startTime = Date.now();
+
+    const pollInterval = setInterval(async () => {
+      try {
+        // Check timeout
+        if (Date.now() - startTime > timeout) {
+          clearInterval(pollInterval);
+          return res.status(504).json({
+            error: 'Request timed out. Please try again later.'
+          });
+        }
+
+        // Check job status
+        const job = await getJobByEmail(userEmail);
+
+        if (job && job.status === 'completed') {
+          clearInterval(pollInterval);
+
+          const result = job.result || {};
+
+          if (result.success) {
+            // Return the exact response from StealthWriter
+            res.set('Content-Type', 'text/x-component');
+            return res.status(200).send(result.response);
+          } else {
+            return res.status(500).json({
+              error: result.error || 'Unknown error'
+            });
+          }
+        }
+
+        if (job && job.status === 'failed') {
+          clearInterval(pollInterval);
+          return res.status(500).json({
+            error: job.result?.error || 'Processing failed'
+          });
+        }
+
+      } catch (pollError) {
+        console.error('❌ Poll error:', pollError.message);
+      }
+    }, 2000); // Check every 2 seconds
+
+  } catch (error) {
+    console.error('❌ Humanize error:', error.message);
+    return res.status(500).json({ error: error.message });
+  }
+}
+
+/**
+ * Regular proxy handler for non-API routes
+ */
 export async function proxyStealthWriterWithPuppeteer(req, res) {
   try {
     console.log('✍️ [STEALTHWRITER] Proxy request:', req.method, req.originalUrl);
@@ -94,8 +189,6 @@ export async function proxyStealthWriterWithPuppeteer(req, res) {
     res.set('Expires', '0');
 
     // Handle HTML
-    // Handle HTML
-    // Handle HTML
     if (contentType.includes('text/html')) {
       let html = response.data.toString('utf-8');
 
@@ -141,6 +234,7 @@ if('serviceWorker' in navigator){navigator.serviceWorker.getRegistrations().then
       res.set('Content-Type', 'text/html');
       return res.status(response.status).send(html);
     }
+
     // Everything else
     if (response.headers['content-type']) {
       res.set('Content-Type', response.headers['content-type']);
