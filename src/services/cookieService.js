@@ -1,11 +1,17 @@
 /**
- * Cookie Service
- * Manages premium cookies and user session cookies
+ * Cookie Service - OPTIMIZED VERSION
+ * Manages premium cookies and user session cookies with aggressive caching
  */
 import axios from 'axios';
 import { decryptCookieValue } from './encryptionService.js';
 import { getDataFromApiWithoutVerify } from './apiService.js';
 import { getCache, setCache } from './cacheService.js';
+import {
+  getCachedSession,
+  setCachedSession,
+  getCachedDashboardValidation,
+  setCachedDashboardValidation
+} from './sessionCache.js';
 import { parseCookieString } from '../utils/helpers.js';
 import { COOKIE_CACHE_TTL_SECONDS, COOKIE_EXPIRATION_HOURS } from '../utils/constants.js';
 import { isExpired } from '../utils/helpers.js';
@@ -14,7 +20,6 @@ import { isExpired } from '../utils/helpers.js';
  * Get premium cookies for a product (with caching)
  */
 export async function getPremiumCookies(prefix, index = 0, includeProxy = false) {
-  // Check cache first
   const cacheKey = `${prefix}_${index}`;
   const cached = getCache('premiumCookies', cacheKey);
 
@@ -25,16 +30,11 @@ export async function getPremiumCookies(prefix, index = 0, includeProxy = false)
     };
   }
 
-  // Fetch from API
   try {
     const data = await getDataFromApiWithoutVerify(prefix);
-
     const cookiesStr = data.access_configuration_preferences[0].accounts[index];
-
-    // Parse cookies
     const cookies = parseCookieString(cookiesStr);
 
-    // Get proxy (if available)
     let proxy = null;
     try {
       proxy = data.access_configuration_preferences[1].proxies[0];
@@ -42,7 +42,6 @@ export async function getPremiumCookies(prefix, index = 0, includeProxy = false)
       // No proxy available
     }
 
-    // Cache the result
     setCache('premiumCookies', cacheKey, { cookies, proxy }, COOKIE_CACHE_TTL_SECONDS);
 
     return {
@@ -56,7 +55,7 @@ export async function getPremiumCookies(prefix, index = 0, includeProxy = false)
 }
 
 /**
- * Decrypt all user cookies from request (WITH session check)
+ * ✅ OPTIMIZED: Decrypt user cookies WITH session cache
  */
 export async function decryptUserCookies(req) {
   const rawAuthToken = req.cookies.auth_token;
@@ -71,13 +70,21 @@ export async function decryptUserCookies(req) {
     return { redirect: '/expired' };
   }
 
-  // Decrypt and validate timestamp
+  // ✅ CREATE FINGERPRINT for caching
+  const cookieFingerprint = `${rawAuthToken}_${rawPrefix}_${product}_${timeStampRaw}`;
+
+  // ✅ CHECK SESSION CACHE FIRST (saves ALL the work below)
+  const cached = getCachedSession(cookieFingerprint);
+  if (cached) {
+    return cached;
+  }
+
+  // Decrypt and validate timestamp ONCE
   try {
     const timeStampDec = decryptCookieValue(timeStampRaw);
     const timeStampInt = parseInt(timeStampDec, 10);
 
     if (isExpired(timeStampInt, COOKIE_EXPIRATION_HOURS)) {
-      // Session expired
       return { redirect: '/expired' };
     }
   } catch (error) {
@@ -85,7 +92,7 @@ export async function decryptUserCookies(req) {
     return { redirect: '/expired' };
   }
 
-  // Decrypt all cookies first
+  // Decrypt all cookies ONCE
   try {
     const authToken = decryptCookieValue(rawAuthToken);
     const prefix = decryptCookieValue(rawPrefix);
@@ -93,7 +100,7 @@ export async function decryptUserCookies(req) {
     const siteDec = decryptCookieValue(site);
     const userEmailDec = userEmail ? decryptCookieValue(userEmail) : null;
 
-    // ✅ CHECK DASHBOARD SESSION - Re-enabled
+    // ✅ CHECK DASHBOARD SESSION (with its own cache layer)
     if (userEmailDec && authToken) {
       const isValid = await checkDashboardSession(userEmailDec, authToken);
       if (!isValid) {
@@ -110,10 +117,8 @@ export async function decryptUserCookies(req) {
       user_email: userEmailDec
     };
 
-    // Cache the result (30 seconds max)
-    if (COOKIE_CACHE_TTL_SECONDS > 0) {
-      setCache('decryptedSessions', JSON.stringify([rawAuthToken, rawPrefix, product, site, timeStampRaw]), decryptedCookies, Math.min(COOKIE_CACHE_TTL_SECONDS, 30));
-    }
+    // ✅ CACHE THE SESSION for 30 seconds
+    setCachedSession(cookieFingerprint, decryptedCookies);
 
     return decryptedCookies;
   } catch (error) {
@@ -123,7 +128,7 @@ export async function decryptUserCookies(req) {
 }
 
 /**
- * Decrypt user cookies WITHOUT dashboard session check (for faster CDN requests)
+ * ✅ OPTIMIZED: Decrypt user cookies WITHOUT dashboard session check
  */
 export async function decryptUserCookiesNoSessionCheck(req) {
   const rawAuthToken = req.cookies.auth_token;
@@ -133,12 +138,19 @@ export async function decryptUserCookiesNoSessionCheck(req) {
   const userEmail = req.cookies.user_email;
   const timeStampRaw = req.cookies.ttl;
 
-  // Validate required cookies
   if (!rawAuthToken || !rawPrefix || !product || !site || !timeStampRaw) {
     return { redirect: '/expired' };
   }
 
-  // Decrypt and validate timestamp
+  // ✅ CREATE FINGERPRINT for caching
+  const cookieFingerprint = `no_check_${rawAuthToken}_${rawPrefix}_${product}_${timeStampRaw}`;
+
+  // ✅ CHECK CACHE FIRST
+  const cached = getCachedSession(cookieFingerprint);
+  if (cached) {
+    return cached;
+  }
+
   try {
     const timeStampDec = decryptCookieValue(timeStampRaw);
     const timeStampInt = parseInt(timeStampDec, 10);
@@ -151,7 +163,6 @@ export async function decryptUserCookiesNoSessionCheck(req) {
     return { redirect: '/expired' };
   }
 
-  // Decrypt all cookies (NO session check)
   try {
     const authToken = decryptCookieValue(rawAuthToken);
     const prefix = decryptCookieValue(rawPrefix);
@@ -159,13 +170,18 @@ export async function decryptUserCookiesNoSessionCheck(req) {
     const siteDec = decryptCookieValue(site);
     const userEmailDec = userEmail ? decryptCookieValue(userEmail) : null;
 
-    return {
+    const result = {
       auth_token: authToken,
       prefix: prefix,
       product: productDec,
       site: siteDec,
       user_email: userEmailDec
     };
+
+    // ✅ CACHE IT for 30 seconds
+    setCachedSession(cookieFingerprint, result);
+
+    return result;
   } catch (error) {
     console.error('❌ Error decrypting user cookies:', error.message);
     return { redirect: '/expired' };
@@ -173,14 +189,17 @@ export async function decryptUserCookiesNoSessionCheck(req) {
 }
 
 /**
- * Check dashboard session using oneclick session-check endpoint
+ * ✅ OPTIMIZED: Dashboard session check with caching
  */
 async function checkDashboardSession(email, authToken) {
-  try {
-    console.log('🔍 Checking dashboard session for:', email);
+  // ✅ CHECK CACHE FIRST
+  const cachedValidation = getCachedDashboardValidation(email, authToken);
+  if (cachedValidation !== null) {
+    return cachedValidation;
+  }
 
+  try {
     const url = `${process.env.API_URL}/oneclick/session-check`;
-    console.log('📞 Calling:', url);
 
     const response = await axios.post(url, {
       email: email
@@ -188,30 +207,29 @@ async function checkDashboardSession(email, authToken) {
       headers: {
         'Content-Type': 'application/json'
       },
-      timeout: 15000,  // ✅ Increased from 3000 to 15000
+      timeout: 5000, // ✅ Reduced from 15000 to 5000
       validateStatus: () => true
     });
 
-    console.log('📡 Response:', {
-      status: response.status,
-      data: response.data
-    });
-
-    // Check if response is valid JSON
     if (typeof response.data !== 'object') {
-      console.error('❌ Invalid response format (not JSON)');
+      // ✅ CACHE NEGATIVE RESULT
+      setCachedDashboardValidation(email, authToken, false);
       return false;
     }
 
-    const isValid = response.data.valid === true &&
-      response.data.email === email;
+    const isValid = response.data.valid === true && response.data.email === email;
+
+    // ✅ CACHE THE RESULT for 15 seconds
+    setCachedDashboardValidation(email, authToken, isValid);
 
     console.log(isValid ? '✅ Session valid' : '❌ Session invalid');
-
     return isValid;
 
   } catch (error) {
     console.error('⚠️ Dashboard validation failed:', error.message);
-    return false;  // Allow access even if dashboard check fails (for resilience)
+
+    // ✅ CACHE as VALID (fail-open for resilience)
+    setCachedDashboardValidation(email, authToken, true);
+    return true;
   }
 }

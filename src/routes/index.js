@@ -32,6 +32,111 @@ router.use((req, res, next) => {
 // ============================================
 // SETUP SESSION ENDPOINT
 // ============================================
+
+// ============================================
+// ✅ SETUP SESSION ENDPOINT - POST VERSION (NEW!)
+// ============================================
+router.post('/setup-session', (req, res) => {
+  console.log('🔧 Setting up session via POST');
+  console.log('📥 Body params:', Object.keys(req.body));
+
+  const {
+    auth_token,
+    prefix,
+    product,
+    site,
+    user_email,
+    ttl
+  } = req.body;  // ← Get from req.body, not req.query
+
+  if (!auth_token || !prefix || !product || !site) {
+    console.error('❌ Missing required parameters');
+    return res.status(400).send(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Session Setup Required</title>
+        <style>
+          body { font-family: Arial, sans-serif; max-width: 600px; margin: 100px auto; padding: 20px; }
+          .error { background: #fee; border: 2px solid #f00; padding: 20px; border-radius: 8px; }
+          h1 { color: #c00; }
+        </style>
+      </head>
+      <body>
+        <div class="error">
+          <h1>⚠️ Session Setup Error</h1>
+          <p><strong>Your session has expired or is invalid.</strong></p>
+          <p>Please go back to your ToolsZilla dashboard and click the "One-Click Access" button again.</p>
+        </div>
+      </body>
+      </html>
+    `);
+  }
+
+  console.log('✅ All parameters present');
+
+  const isLocalhost = req.get('host').includes('localhost') || req.get('host').includes('127.0.0.1');
+
+  const cookieOptions = {
+    httpOnly: true,
+    secure: !isLocalhost,
+    maxAge: 3600000,
+    path: '/',
+    sameSite: isLocalhost ? 'lax' : 'none',
+    ...(isLocalhost ? {} : { domain: '.primewp.net' })
+  };
+
+  console.log('🍪 Setting cookies with options:', cookieOptions);
+  res.cookie('auth_token', auth_token, cookieOptions);
+  res.cookie('prefix', prefix, cookieOptions);
+  res.cookie('product', product, cookieOptions);
+  res.cookie('site', site, cookieOptions);
+  res.cookie('ttl', ttl || Math.floor(Date.now() / 1000).toString(), cookieOptions);
+
+  if (user_email) {
+    res.cookie('user_email', user_email, cookieOptions);
+  }
+
+  console.log('✅ Cookies set successfully');
+
+  const productName = product || 'flaticon';
+
+  // Redirect logic (same as GET route)
+  if (productName === 'epidemicsound') {
+    console.log(`🔀 Redirecting to: /music/featured/`);
+    return res.redirect('/music/featured/?override_referrer=');
+  } else if (productName === 'envato') {
+    console.log(`🔀 Redirecting to: /`);
+    return res.redirect('/');
+  } else if (productName === 'freepik') {
+    console.log(`🔀 Redirecting to: /`);
+    return res.redirect('/');
+  } else if (productName === 'iconscout') {
+    console.log(`🔀 Redirecting to: /`);
+    return res.redirect('/');
+  } else if (productName === 'storyblocks') {
+    console.log(`🔀 Redirecting to: /`);
+    return res.redirect('/');
+  } else if (productName === 'stealthwriter') {
+    console.log(`🔀 Redirecting to: /dashboard`);
+    return res.redirect('/dashboard');
+  } else if (productName === 'turndetect') {
+    console.log(`🔀 Redirecting to: /dashboard`);
+    return res.redirect('/dashboard');
+  } else if (productName === 'vecteezy') {
+    console.log(`🔀 Redirecting to: /vecteezy/`);
+    return res.redirect('/vecteezy/');
+  } else {
+    console.log(`🔀 Redirecting to: /${productName}`);
+    return res.redirect(`/${productName}`);
+  }
+});
+
+// ============================================
+// SETUP SESSION ENDPOINT - GET VERSION (KEEP FOR BACKWARDS COMPATIBILITY)
+// ============================================
+
+
 router.get('/setup-session', (req, res) => {
   console.log('🔧 Setting up session');
   console.log('📥 Query params:', req.query);
@@ -630,6 +735,23 @@ router.get('/manifest.webmanifest', (req, res) => {
 
 //   next();
 // });
+
+// ✅ FORCE VECTEEZY PREFIX FOR SPECIFIC PATHS
+router.use((req, res, next) => {
+  const productCookie = req.cookies.product || '';
+
+  if (productCookie === 'vecteezy') {
+    // Vecteezy-specific API paths that need prefixing
+    const vecteezyApiPaths = ['/async_contributors_info', '/resources/', '/site.webmanifest', '/signups/'];
+
+    if (vecteezyApiPaths.some(path => req.url.startsWith(path))) {
+      console.log(`🔀 [VECTEEZY FIX] ${req.url} → /vecteezy${req.url}`);
+      req.url = `/vecteezy${req.url}`;
+    }
+  }
+
+  next();
+});
 // ============================================
 // ✅ FIXED AUTO-ROUTER - NO MORE DOUBLE PREFIXING!
 // ============================================
