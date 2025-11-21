@@ -1,25 +1,25 @@
 /**
- * Envato Routes
+ * Envato Routes - OPTIMIZED
  */
 import axios from 'axios';
 import express from 'express';
 import envatoConfig from '../../../products/envato.js';
-import { handleProxyRequest } from '../../controllers/proxyController.js';
 import { showLimitReachedPage } from '../../controllers/downloadController.js';
-// ❌ MISSING THESE IMPORTS AT THE TOP:
 import { decryptUserCookies } from '../../services/cookieService.js';
 import { getDataFromApiWithoutVerify } from '../../services/apiService.js';
 import {
   processEnvatoDownload,
-  proxyEnvatoAssets,
-  proxyEnvatoImages,
   proxyEnvatoAccount,
-  proxyEnvatoApi,
-
+  proxyEnvatoApi
 } from './handlers/envatoHandlers.js';
+import {
+  proxyEnvatoWithAxios,
+  proxyEnvatoAssetsOptimized,
+  proxyEnvatoImagesOptimized
+} from './handlers/envatoAxiosHandlers.js';
 import { USER_AGENT } from '../../utils/constants.js';
-const router = express.Router();
 
+const router = express.Router();
 
 function getCurrentRotationIndex(totalAccounts) {
   const now = new Date();
@@ -30,7 +30,6 @@ function getCurrentRotationIndex(totalAccounts) {
   return intervalIndex % totalAccounts;
 }
 
-
 // Logging middleware
 router.use((req, res, next) => {
   console.log('\n========================================');
@@ -38,8 +37,6 @@ router.use((req, res, next) => {
   console.log('   Method:', req.method);
   console.log('   URL:', req.url);
   console.log('   Path:', req.path);
-  console.log('   Original URL:', req.originalUrl);
-  console.log('   Base URL:', req.baseUrl);
   console.log('========================================\n');
   next();
 });
@@ -62,22 +59,19 @@ router.get('/limit-reached', (req, res) => {
   return showLimitReachedPage(req, res, envatoConfig.displayName, 'default');
 });
 
-
-
-// Asset routes
-router.use('/assets', proxyEnvatoAssets);
-router.use('/images', proxyEnvatoImages);
+// ✅ OPTIMIZED: Asset and image routes
+router.use('/assets', proxyEnvatoAssetsOptimized);
+router.use('/images', proxyEnvatoImagesOptimized);
 router.use('/account', proxyEnvatoAccount);
 
-// In envatoRoutes.js, ADD this BEFORE the /elements-api route:
-
-// ✅ Download endpoint - must be BEFORE /elements-api route
+// Download endpoints
 router.post('/elements-api/items/:itemId/download_and_license.json', processEnvatoDownload);
 router.post('/download_and_license.json', processEnvatoDownload);
 
-// Then the API routes
+// API routes
 router.use('/data-api', (req, res) => proxyEnvatoApi(req, res, 'data-api'));
 router.use('/elements-api', (req, res) => proxyEnvatoApi(req, res, 'elements-api'));
+
 // Static JSON
 router.get('/user_collections.json', (req, res) => {
   return res.json({ data: [] });
@@ -92,7 +86,7 @@ router.get('/infrastructure_availability.json', (req, res) => {
   });
 });
 
-// Lazy API - keep the /lazy prefix in the URL
+// Lazy API
 router.use('/lazy', async (req, res) => {
   try {
     const userData = await decryptUserCookies(req);
@@ -109,8 +103,6 @@ router.use('/lazy', async (req, res) => {
     }
 
     const cookieString = cookiesArray.map(c => `${c.name}=${c.value}`).join('; ');
-
-    // Keep /data-api/lazy in the path
     const targetUrl = `https://elements.envato.com/data-api${req.url}`;
 
     console.log('🎯 Lazy API:', targetUrl);
@@ -137,39 +129,11 @@ router.use('/lazy', async (req, res) => {
     return res.status(200).json({ data: [] });
   }
 });
-// // Add this BEFORE the auto-router section
-// router.get('/manifest.webmanifest', (req, res) => {
-//   const productCookie = req.cookies.product || '';
 
-//   if (productCookie === 'envato') {
-//     return res.json({
-//       name: "Envato Elements",
-//       short_name: "Elements",
-//       start_url: "/envato",
-//       display: "standalone",
-//       theme_color: "#82b541",
-//       background_color: "#ffffff",
-//       icons: []
-//     });
-//   }
-
-//   // Default
-//   return res.json({
-//     name: "ToolsZilla",
-//     short_name: "ToolsZilla",
-//     start_url: "/",
-//     display: "standalone",
-//     icons: []
-//   });
-// });
-router.get('/favicon.svg', (req, res) => {
-  return handleProxyRequest(req, res, envatoConfig);
-});
-
-// ✅ CHANGED: Use Puppeteer instead of Axios
+// ✅ CHANGED: Use optimized Axios proxy (NOT Puppeteer!)
 router.use('/', (req, res) => {
-  console.log('✅ HIT ROOT ROUTE - Using standard proxy');
-  return handleProxyRequest(req, res, envatoConfig);
+  console.log('✅ HIT ROOT ROUTE - Using Axios proxy');
+  return proxyEnvatoWithAxios(req, res);
 });
 
 export default router;

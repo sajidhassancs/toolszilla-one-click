@@ -7,7 +7,6 @@ export async function proxyFreepikWithAxios(req, res) {
     try {
         console.log('🎨 [AXIOS] Freepik request:', req.method, req.originalUrl);
 
-        // Get user cookies
         const userData = await decryptUserCookies(req);
         if (userData.redirect) {
             return res.redirect(userData.redirect);
@@ -21,11 +20,19 @@ export async function proxyFreepikWithAxios(req, res) {
             cookiesArray = JSON.parse(cookiesArray);
         }
 
-        // Build cookie string
         const cookieString = cookiesArray.map(c => `${c.name}=${c.value}`).join('; ');
 
-        // Build target URL
-        let cleanPath = req.url;
+        // ✅ CRITICAL FIX: Use req.originalUrl and strip /freepik prefix
+        let cleanPath = req.originalUrl;
+
+        // Strip /freepik prefix if present
+        if (cleanPath.startsWith('/freepik/')) {
+            cleanPath = cleanPath.substring(8); // Remove '/freepik'
+        } else if (cleanPath.startsWith('/freepik')) {
+            cleanPath = cleanPath.substring(7); // Remove '/freepik' (no trailing slash)
+        }
+
+        // Ensure path starts with /
         if (!cleanPath.startsWith('/')) {
             cleanPath = '/' + cleanPath;
         }
@@ -33,23 +40,15 @@ export async function proxyFreepikWithAxios(req, res) {
         const targetUrl = `https://www.freepik.com${cleanPath}`;
         console.log('🎯 Target URL:', targetUrl);
 
-        // Make request
         const response = await axios({
             method: req.method,
             url: targetUrl,
             headers: {
-                'accept': '*/*',
-                'accept-language': 'en-US,en;q=0.9',
-                'priority': 'u=1, i',
-                'referer': 'https://www.freepik.com/',
-                'sec-ch-ua': '"Chromium";v="142", "Google Chrome";v="142", "Not_A Brand";v="99"',
-                'sec-ch-ua-mobile': '?0',
-                'sec-ch-ua-platform': '"Windows"',
-                'sec-fetch-dest': 'empty',
-                'sec-fetch-mode': 'cors',
-                'sec-fetch-site': 'same-origin',
-                'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36',
-                'cookie': cookieString
+                'User-Agent': USER_AGENT,
+                'Referer': 'https://www.freepik.com/',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Cookie': cookieString
             },
             data: req.body,
             validateStatus: () => true,
@@ -66,64 +65,57 @@ export async function proxyFreepikWithAxios(req, res) {
         // Handle HTML
         if (contentType.includes('text/html')) {
             let html = response.data.toString('utf-8');
+
             console.log('🔧 Rewriting Freepik HTML...');
-            const urlFixScript = `
+
+            // ✅ Inject fetch interceptor for API calls
+            const fetchInterceptor = `
 <script>
-console.log('🔧 [FREEPIK] Proxy active');
+(function() {
+  console.log('🔧 [FREEPIK] Installing fetch interceptor...');
+  
+  const originalFetch = window.fetch;
+  window.fetch = function(url, options) {
+    let urlString = typeof url === 'string' ? url : url.toString();
+    
+    // If it's an absolute freepik.com URL, rewrite it
+    if (urlString.includes('www.freepik.com')) {
+      urlString = urlString.replace('https://www.freepik.com', '${currentHost}/freepik');
+      console.log('🔄 [FETCH] Rewritten:', urlString);
+    }
+    
+    return originalFetch(urlString, options);
+  };
+  
+  console.log('✅ Fetch interceptor installed');
+})();
 </script>
 `;
-            // ✅ ONLY inject the fetch interceptor - NO URL rewriting!
-            //             const urlFixScript = `
-            // <script>
-            // (function() {
-            //   console.log('🔧 [FREEPIK] Installing fetch interceptor...');
 
-            //   // ✅ INTERCEPT ALL FETCH CALLS
-            //   const originalFetch = window.fetch;
-            //   window.fetch = function(url, options) {
-            //     let urlString = typeof url === 'string' ? url : url.toString();
-
-            //     console.log('🔄 [FETCH]', urlString);
-
-            //     // If it's an absolute freepik.com URL, make it relative
-            //     if (urlString.includes('freepik.com')) {
-            //       try {
-            //         const urlObj = new URL(urlString);
-            //         urlString = urlObj.pathname + urlObj.search + urlObj.hash;
-            //         console.log('   → Converted to:', urlString);
-            //       } catch (e) {
-            //         // Already relative, keep as-is
-            //       }
-            //     }
-
-            //     return originalFetch(urlString, options);
-            //   };
-
-            //   console.log('✅ Fetch interceptor installed');
-            // })();
-            // </script>
-            // `;
-
-            // ✅ Inject script
+            // Inject script
             if (html.includes('<head>')) {
-                html = html.replace('<head>', `<head>${urlFixScript}`);
+                html = html.replace('<head>', `<head>${fetchInterceptor}`);
                 console.log('   ✅ Injected fetch interceptor');
             }
 
-            // ✅ ONLY rewrite static.cdnpk.net for assets
-            html = html.replace(/https:\/\/static\.cdnpk\.net/g, `${req.protocol}://${req.get('host')}/freepik/static-cdnpk`);
-
-            // ❌ REMOVE ALL OTHER URL REWRITES - Let fetch interceptor handle them!
-            // DON'T rewrite www.freepik.com URLs in HTML anymore
+            // ✅ Rewrite CDN URLs
+            html = html.replace(/https:\/\/static\.cdnpk\.net/g, `${currentHost}/freepik/static-cdnpk`);
+            html = html.replace(/https:\/\/static\.freepik\.com/g, `${currentHost}/freepik/static`);
+            html = html.replace(/https:\/\/cdn\.freepik\.com/g, `${currentHost}/freepik/cdn`);
+            html = html.replace(/https:\/\/cdnb\.freepik\.com/g, `${currentHost}/freepik/cdnb`);
 
             console.log('   ✅ HTML rewriting complete');
 
             res.set('Content-Type', 'text/html; charset=utf-8');
+            res.set('Access-Control-Allow-Origin', '*');
             return res.status(response.status).send(html);
         }
 
-        // Handle other content types (JS, CSS, images, videos)
-        res.set('Content-Type', contentType);
+        // Handle other content types
+        if (contentType) {
+            res.set('Content-Type', contentType);
+        }
+        res.set('Access-Control-Allow-Origin', '*');
         return res.status(response.status).send(response.data);
 
     } catch (error) {

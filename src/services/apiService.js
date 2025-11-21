@@ -19,7 +19,8 @@ export async function getDataFromApi(authToken, prefix) {
       null,
       {
         headers: { Authorization: `Bearer ${authToken}` },
-        params: { prefix }
+        params: { prefix },
+        timeout: 10000 // ✅ Add timeout
       }
     );
 
@@ -46,7 +47,8 @@ export async function getDataFromApiWithoutVerify(prefix) {
     const response = await axios.get(
       `${API_URL}/oneclick/access_without_verify/${prefix}`,
       {
-        headers: { Authorization: API_KEY }
+        headers: { Authorization: API_KEY },
+        timeout: 10000 // ✅ Add timeout
       }
     );
 
@@ -62,54 +64,75 @@ export async function getDataFromApiWithoutVerify(prefix) {
 }
 
 /**
- * Check download limit from Stats API
+ * Check download limit from Stats API (matches Python check_or_add_download)
  */
 export async function checkDownloadLimit(toolName, userEmail) {
   try {
-    console.log(`🔍 Checking download limit for: ${toolName} - ${userEmail}`);
-    console.log(`📡 Stats API URL: ${LIMIT_API_URL}/api/stats/today`);
+    console.log(`🔍 [LIMIT CHECK] ${toolName} - ${userEmail}`);
+    console.log(`   API: ${LIMIT_API_URL}/api/stats/today`);
 
     const response = await axios.get(
       `${LIMIT_API_URL}/api/stats/today`,
       {
-        headers: { 'X-API-Key': LIMIT_API_KEY },
+        headers: {
+          'X-API-Key': LIMIT_API_KEY,
+          'Content-Type': 'application/json'
+        },
         params: {
           tool_name: toolName,
           email: userEmail
         },
-        timeout: 5000 // ✅ Add timeout
+        timeout: 5000,
+        validateStatus: (status) => status < 500 // ✅ Accept 4xx as valid
       }
     );
 
+    // ✅ Handle different response structures
     const data = response.data;
-    const downloadCount = parseInt(data.by_tool?.[0]?.count || 0, 10);
+    let downloadCount = 0;
 
-    console.log(`✅ Current download count: ${downloadCount}`);
+    // Try different response formats
+    if (data.by_tool && Array.isArray(data.by_tool) && data.by_tool.length > 0) {
+      downloadCount = parseInt(data.by_tool[0].count || 0, 10);
+    } else if (data.count !== undefined) {
+      downloadCount = parseInt(data.count || 0, 10);
+    } else if (data.downloads !== undefined) {
+      downloadCount = parseInt(data.downloads || 0, 10);
+    }
+
+    console.log(`   ✅ Count: ${downloadCount}`);
 
     return {
       success: true,
       count: downloadCount
     };
   } catch (error) {
-    console.error('❌ Error checking download limit:', error.message);
-    console.error('   LIMIT_API_URL:', LIMIT_API_URL);
-    console.error('   LIMIT_API_KEY:', LIMIT_API_KEY ? 'Set' : 'Missing');
+    console.error('❌ [LIMIT CHECK] Error:', error.message);
 
-    // ✅ CRITICAL: Return success: true with count: 0 (fail-open)
+    // ✅ Log more details for debugging
+    if (error.code === 'ECONNREFUSED') {
+      console.error('   ⚠️  Stats API connection refused - is it running?');
+    } else if (error.code === 'ETIMEDOUT') {
+      console.error('   ⚠️  Stats API timeout - network issue?');
+    }
+
+    // ✅ CRITICAL: Fail-open (allow downloads on error)
+    console.log('   ⚠️  Failing open - allowing download');
     return {
-      success: true, // ✅ Changed from false to true
-      count: 0       // ✅ Allow downloads if API fails
+      success: true,
+      count: 0,
+      error: error.message
     };
   }
 }
 
 /**
- * Add download record to Stats API
+ * Add download record to Stats API (matches Python add_download)
  */
 export async function addDownloadRecord(toolName, userEmail, website, userIp, info = null) {
   try {
-    console.log(`📝 Recording download for: ${toolName} - ${userEmail}`);
-    console.log(`📡 Stats API URL: ${LIMIT_API_URL}/api/stats/today`);
+    console.log(`📝 [RECORD] ${toolName} - ${userEmail}`);
+    console.log(`   API: ${LIMIT_API_URL}/api/stats/today`);
 
     const payload = {
       tool_name: toolName,
@@ -118,32 +141,153 @@ export async function addDownloadRecord(toolName, userEmail, website, userIp, in
       user_ip: userIp
     };
 
+    // ✅ Add info - can be object or string
     if (info) {
-      payload.info = info;
+      if (typeof info === 'string') {
+        payload.info = info;
+      } else if (typeof info === 'object') {
+        payload.info = JSON.stringify(info);
+      }
     }
+
+    console.log('   Payload:', JSON.stringify(payload, null, 2));
 
     const response = await axios.post(
       `${LIMIT_API_URL}/api/stats/today`,
       payload,
       {
-        headers: { 'X-API-Key': LIMIT_API_KEY },
-        timeout: 5000 // ✅ Add timeout
+        headers: {
+          'X-API-Key': LIMIT_API_KEY,
+          'Content-Type': 'application/json'
+        },
+        timeout: 5000,
+        validateStatus: (status) => status < 500 // ✅ Accept 4xx as valid
       }
     );
 
-    console.log('✅ Download recorded:', response.data);
+    console.log('   ✅ Recorded:', response.status);
+
     return {
       success: true,
       data: response.data
     };
   } catch (error) {
-    console.error('❌ Error adding download record:', error.message);
-    console.error('   LIMIT_API_URL:', LIMIT_API_URL);
-    console.error('   LIMIT_API_KEY:', LIMIT_API_KEY ? 'Set' : 'Missing');
+    console.error('❌ [RECORD] Error:', error.message);
 
-    // ✅ CRITICAL: Return success: true even if recording fails (don't block downloads)
+    // ✅ Log more details for debugging
+    if (error.code === 'ECONNREFUSED') {
+      console.error('   ⚠️  Stats API connection refused - is it running?');
+    } else if (error.code === 'ETIMEDOUT') {
+      console.error('   ⚠️  Stats API timeout - network issue?');
+    }
+
+    // ✅ CRITICAL: Still return success (don't block downloads if recording fails)
+    console.log('   ⚠️  Failed to record, but continuing');
     return {
-      success: true, // ✅ Changed from false to true
+      success: true, // ✅ Don't block downloads
+      error: error.message
+    };
+  }
+}
+
+/**
+ * Get download stats for a user (optional - for analytics)
+ */
+export async function getUserDownloadStats(toolName, userEmail, startDate = null, endDate = null) {
+  try {
+    console.log(`📊 [STATS] Getting stats for ${toolName} - ${userEmail}`);
+
+    const params = {
+      tool_name: toolName,
+      email: userEmail
+    };
+
+    if (startDate) params.start_date = startDate;
+    if (endDate) params.end_date = endDate;
+
+    const response = await axios.get(
+      `${LIMIT_API_URL}/api/stats/user`,
+      {
+        headers: {
+          'X-API-Key': LIMIT_API_KEY,
+          'Content-Type': 'application/json'
+        },
+        params: params,
+        timeout: 5000
+      }
+    );
+
+    return {
+      success: true,
+      data: response.data
+    };
+  } catch (error) {
+    console.error('❌ [STATS] Error:', error.message);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+
+/**
+ * Reset user download count (admin only - optional)
+ */
+export async function resetUserDownloads(toolName, userEmail) {
+  try {
+    console.log(`🔄 [RESET] Resetting downloads for ${toolName} - ${userEmail}`);
+
+    const response = await axios.delete(
+      `${LIMIT_API_URL}/api/stats/today`,
+      {
+        headers: {
+          'X-API-Key': LIMIT_API_KEY,
+          'Content-Type': 'application/json'
+        },
+        params: {
+          tool_name: toolName,
+          email: userEmail
+        },
+        timeout: 5000
+      }
+    );
+
+    console.log('   ✅ Reset successful');
+
+    return {
+      success: true,
+      data: response.data
+    };
+  } catch (error) {
+    console.error('❌ [RESET] Error:', error.message);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+
+/**
+ * Health check for Stats API (optional - for monitoring)
+ */
+export async function checkStatsApiHealth() {
+  try {
+    const response = await axios.get(
+      `${LIMIT_API_URL}/health`,
+      {
+        headers: { 'X-API-Key': LIMIT_API_KEY },
+        timeout: 3000
+      }
+    );
+
+    return {
+      success: true,
+      status: response.data
+    };
+  } catch (error) {
+    console.error('❌ Stats API health check failed:', error.message);
+    return {
+      success: false,
       error: error.message
     };
   }

@@ -1,13 +1,14 @@
 /**
- * Proxy Controller - FIXED VERSION
+ * Proxy Controller - WITH DOWNLOAD LIMITS
  */
 import { decryptUserCookies, getPremiumCookies } from '../services/cookieService.js';
 import { makeProxyRequest, processProxyResponse } from '../services/proxyService.js';
 import { isPathBanned } from '../utils/validators.js';
 import { STATIC_FILE_EXTENSIONS } from '../utils/constants.js';
+import { checkDownloadPermission, recordDownloadAction, showLimitReachedPage } from './downloadController.js';
 
 /**
- * Main proxy handler
+ * Main proxy handler WITH DOWNLOAD LIMIT CHECKING
  */
 export async function handleProxyRequest(req, res, productConfig) {
   try {
@@ -47,17 +48,59 @@ export async function handleProxyRequest(req, res, productConfig) {
     }
 
     const prefix = userData.prefix;
+    const userEmail = userData.user_email;
+    const plan = userData.plan || 'default';
+
     if (!prefix) {
       console.log('❌ No prefix found, redirecting to /expired');
       return res.redirect('/expired');
     }
 
-    console.log('✅ User validated, prefix:', prefix);
+    console.log('✅ User validated:');
+    console.log('   Prefix:', prefix);
+    console.log('   Email:', userEmail);
+    console.log('   Plan:', plan);
 
     // Check banned paths
     if (isPathBanned(cleanPath, productConfig.bannedPaths || [])) {
       console.warn('⚠️  Blocked banned path:', cleanPath);
       return res.status(403).send('Access to this page is restricted.');
+    }
+
+    // ✅ DOWNLOAD LIMIT CHECK - Detect download endpoints
+    const isDownloadEndpoint =
+      lowerPath.includes('/download') ||
+      lowerPath.includes('/license') ||
+      lowerPath.includes('/export') ||
+      (req.method === 'POST' && (
+        lowerPath.includes('/download_and_license') || // Envato
+        lowerPath.includes('/items/download') ||        // Flaticon
+        lowerPath.includes('/pikaso/export') ||         // Freepik Pikaso
+        lowerPath.includes('/api/download')             // Generic
+      ));
+
+    console.log('📥 Is download endpoint?', isDownloadEndpoint);
+
+    // ✅ CHECK LIMIT BEFORE PROCESSING
+    if (isDownloadEndpoint && productConfig.enforceLimits !== false) {
+      console.log('🔒 Checking download limit...');
+
+      const limitCheck = await checkDownloadPermission(
+        req,
+        productConfig.name,
+        userEmail,
+        plan
+      );
+
+      if (!limitCheck.allowed) {
+        console.log(`⚠️  LIMIT REACHED: ${limitCheck.count}/${limitCheck.limit}`);
+        return showLimitReachedPage(req, res, productConfig.displayName, plan);
+      }
+
+      console.log(`✅ Download allowed: ${limitCheck.count}/${limitCheck.limit}`);
+
+      // Flag this request for recording after success
+      req._shouldRecordDownload = true;
     }
 
     // Build upstream URL
@@ -86,7 +129,6 @@ export async function handleProxyRequest(req, res, productConfig) {
     const isStaticFile = STATIC_FILE_EXTENSIONS.some(ext => lowerPath.endsWith(ext));
     console.log('📦 Is static file?', isStaticFile);
 
-    // ✅ FIX: Use req.protocol instead of hardcoded http
     const currentHost = `${req.protocol}://${req.get('host')}`;
     console.log('🌐 Current host:', currentHost);
 
@@ -117,7 +159,6 @@ export async function handleProxyRequest(req, res, productConfig) {
 
         const contentType = response.headers['content-type'] || 'application/octet-stream';
 
-        // ✅ ADD CORS HEADERS
         res.setHeader('Access-Control-Allow-Origin', '*');
         res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
         res.setHeader('Access-Control-Allow-Headers', '*');
@@ -128,7 +169,6 @@ export async function handleProxyRequest(req, res, productConfig) {
           console.log('🔧 Processing CSS/JS file, replacing domains...');
           let content = response.data.toString('utf-8');
 
-          // ✅ FIX: Use currentHost instead of http://
           content = content.replace(
             new RegExp(`https?://${productConfig.domain.replace(/\./g, '\\.')}`, 'g'),
             `${currentHost}${productPrefix}`
@@ -170,6 +210,36 @@ export async function handleProxyRequest(req, res, productConfig) {
 
     console.log('✅ Dynamic response status:', response.status);
 
+    // ✅ RECORD DOWNLOAD AFTER SUCCESSFUL RESPONSE
+    if (req._shouldRecordDownload && response.status >= 200 && response.status < 300) {
+      console.log('📝 Recording successful download...');
+
+      // Check if response contains download data
+      const responseText = response.data.toString('utf-8');
+      const hasDownloadContent =
+        responseText.includes('downloadUrl') ||
+        responseText.includes('download_url') ||
+        responseText.includes('file_url') ||
+        response.headers['content-disposition'];
+
+      if (hasDownloadContent) {
+        await recordDownloadAction(
+          req,
+          productConfig.name,
+          userEmail,
+          plan,
+          {
+            path: cleanPath,
+            method: req.method,
+            timestamp: new Date().toISOString()
+          }
+        );
+        console.log('✅ Download recorded successfully');
+      } else {
+        console.log('⚠️  No download content detected, skipping record');
+      }
+    }
+
     // Handle redirects
     if (response.redirectLocation) {
       console.log('↪️  Redirect to:', response.redirectLocation);
@@ -186,7 +256,6 @@ export async function handleProxyRequest(req, res, productConfig) {
     const contentType = response.headers['content-type'] || 'application/octet-stream';
     console.log('   Content-Type:', contentType);
 
-    // ✅ FIX: Use currentHost instead of http://
     const processedData = processProxyResponse(
       response.data,
       lowerPath,
@@ -196,7 +265,7 @@ export async function handleProxyRequest(req, res, productConfig) {
       productConfig.replaceRules || []
     );
 
-    // ✅ REWRITE ASSET URLs FOR PRODUCTS WITH assetDomains CONFIG
+    // Rewrite asset URLs for products with assetDomains config
     if (productConfig.assetDomains && contentType.includes('text/html')) {
       console.log('🔧 Rewriting asset URLs for', productConfig.name);
       let htmlContent = processedData.toString('utf-8');
@@ -205,7 +274,7 @@ export async function handleProxyRequest(req, res, productConfig) {
         const fromDomain = assetDomain.from;
         const toPath = assetDomain.to;
 
-        // ✅ SKIP IMAGE DOMAINS - let them load directly from CDN
+        // Skip image domains - let them load directly from CDN
         if (fromDomain.includes('elements-resized') ||
           fromDomain.includes('elements-assets') ||
           fromDomain.includes('envatousercontent')) {
@@ -213,7 +282,6 @@ export async function handleProxyRequest(req, res, productConfig) {
           continue;
         }
 
-        // ✅ FIX: Use currentHost instead of http://
         htmlContent = htmlContent.replace(
           new RegExp(`https://${fromDomain.replace(/\./g, '\\.')}`, 'g'),
           `${currentHost}${productPrefix}${toPath}`
@@ -222,7 +290,7 @@ export async function handleProxyRequest(req, res, productConfig) {
         console.log(`   ✅ Rewritten: ${fromDomain} → ${currentHost}${productPrefix}${toPath}`);
       }
 
-      // ✅ INJECT DOWNLOAD INTERCEPTOR FOR ENVATO
+      // Inject download interceptor for Envato
       if (productConfig.name === 'envato') {
         console.log('🔧 Injecting Envato download interceptor');
 

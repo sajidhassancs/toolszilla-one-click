@@ -1,6 +1,6 @@
 /**
  * Download Controller
- * Handles download tracking and limits
+ * Handles download tracking and limits (matches Python flow)
  */
 import { canUserDownload, recordDownload } from '../services/limitService.js';
 import { DOWNLOAD_LIMITS } from '../utils/constants.js';
@@ -12,7 +12,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 /**
- * Show limit reached page
+ * Show limit reached page with countdown timer
  */
 export async function showLimitReachedPage(req, res, productName, plan = 'default') {
   try {
@@ -31,7 +31,7 @@ export async function showLimitReachedPage(req, res, productName, plan = 'defaul
 
     // Replace template variables
     html = html.replace(/\{\{daily_limit\}\}/g, dailyLimit);
-    html = html.replace(/\{\{APP_NAME\}\}/g, 'ToolsZilla');
+    html = html.replace(/\{\{APP_NAME\}\}/g, productName);
     html = html.replace(/<title>Daily Usage Limit Reached - .*?<\/title>/g,
       `<title>Daily Usage Limit Reached - ${productName}</title>`);
 
@@ -45,14 +45,13 @@ export async function showLimitReachedPage(req, res, productName, plan = 'defaul
 }
 
 /**
- * Check if user can download
- */
-/**
- * Check if user can download
+ * Check if user can download (matches Python's check_or_add_download with add_download=False)
  */
 export async function checkDownloadPermission(req, toolName, userEmail, plan = 'default') {
   try {
     const result = await canUserDownload(req, toolName, userEmail, plan);
+
+    console.log(`📊 [${toolName}] ${userEmail}: ${result.count}/${result.limit} (allowed: ${result.allowed})`);
 
     return {
       allowed: result.allowed,
@@ -61,27 +60,28 @@ export async function checkDownloadPermission(req, toolName, userEmail, plan = '
     };
   } catch (error) {
     console.error('❌ Error checking download permission:', error.message);
-    // ✅ CHANGED: Return allowed: true (fail-open)
+    // ✅ Fail-open: Allow download on error (same as Python)
+    const limit = DOWNLOAD_LIMITS[plan] || DOWNLOAD_LIMITS.default;
     return {
-      allowed: true,  // ✅ Changed from false to true
+      allowed: true,
       count: 0,
-      limit: DOWNLOAD_LIMITS[plan] || DOWNLOAD_LIMITS.default,
+      limit: limit,
       error: error.message
     };
   }
 }
 
 /**
- * Record download action
+ * Record download action (matches Python's check_or_add_download with add_download=True)
  */
-export async function recordDownloadAction(req, toolName, userEmail, info = null) {
+export async function recordDownloadAction(req, toolName, userEmail, plan = 'default', info = null) {
   try {
-    const success = await recordDownload(req, toolName, userEmail, info);
+    const success = await recordDownload(req, toolName, userEmail, plan, info);
 
     if (success) {
-      console.log(`✅ Download recorded: ${toolName} - ${userEmail}`);
+      console.log(`✅ [${toolName}] Download recorded for ${userEmail}`);
     } else {
-      console.warn(`⚠️  Failed to record download: ${toolName} - ${userEmail}`);
+      console.warn(`⚠️  [${toolName}] Failed to record download for ${userEmail}`);
     }
 
     return success;
