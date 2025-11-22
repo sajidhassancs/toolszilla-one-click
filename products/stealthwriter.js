@@ -10,7 +10,7 @@ export default {
   domain: 'app.stealthwriter.ai',
 
   // Redirect path after login
-  redirectPath: '/dashboard',
+  redirectPath: '/humanizer',
 
   // Banned paths (product-specific, env vars will also apply)
   bannedPaths: [],  // ✅ Empty - we're using BANNED_URL_PATHS from .env

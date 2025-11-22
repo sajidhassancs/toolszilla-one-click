@@ -118,8 +118,8 @@ router.post('/setup-session', (req, res) => {
     console.log(`🔀 Redirecting to: /`);
     return res.redirect('/');
   } else if (productName === 'stealthwriter') {
-    console.log(`🔀 Redirecting to: /dashboard`);
-    return res.redirect('/dashboard');
+    console.log(`🔀 Redirecting to: /humanizer`);
+    return res.redirect('/humanizer');
   } else if (productName === 'turndetect') {
     console.log(`🔀 Redirecting to: /dashboard`);
     return res.redirect('/dashboard');
@@ -224,7 +224,7 @@ router.get('/setup-session', (req, res) => {
 
   } else if (productName === 'stealthwriter') {  // ✅ ADD THIS
     console.log(`🔀 Redirecting to: /dashboard (StealthWriter - no prefix)`);
-    return res.redirect('/dashboard');
+    return res.redirect('/humanizer');
 
   } else if (productName === 'turndetect') {  // ✅ ADD THIS
     console.log(`🔀 Redirecting to: /dashboard (TurnDetect - no prefix)`);
@@ -788,8 +788,9 @@ router.use((req, res, next) => {
   const referer = req.headers.referer || '';
   const hasProductInReferer = productPrefixes.some(prefix => referer.includes(prefix));
 
-  if (hasProductInReferer && productCookie !== 'freepik') {
-    // Referer already has product context - don't add prefix (except for Freepik)
+  // ✅ EXCEPTION: Iconscout needs prefix even when referer has /iconscout
+  if (hasProductInReferer && productCookie !== 'freepik' && productCookie !== 'iconscout') {
+    // Referer already has product context - don't add prefix (except for Freepik and Iconscout)
     return next();
   }
 

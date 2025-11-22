@@ -349,71 +349,93 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
     });
 
     // Try to load with a very permissive strategy
-    try {
-      const response = await page.goto(targetUrl, {
-        waitUntil: 'networkidle2',
-        timeout: 30000
-      });
-      console.log('✅ Page loaded WITH COOKIES');
-      console.log('📊 Response status:', response.status());
-      console.log('📊 Response URL:', response.url());
+    // ✅ PRODUCT-SPECIFIC LOADING STRATEGY
+    let response;
 
-      // ✅ Get content type FIRST
-      const contentType = response.headers()['content-type'] || '';
-      console.log('📄 Content-Type:', contentType);
+    if (productConfig.name === 'storyblocks') {
+      // STORYBLOCKS: Fast loading
+      console.log('🟦 [STORYBLOCKS] Fast loading mode');
 
-      // ✅ Check if this is an asset request
-      const isAssetRequest =
-        /\.(js|css|jpg|jpeg|png|gif|webp|svg|woff|woff2|ttf|eot|ico|json|map)(\?.*)?$/i.test(requestPath) ||
-        requestPath.includes('/wp-content/') ||
-        requestPath.includes('/wp-includes/') ||
-        requestPath.includes('/uploads/') ||
-        requestPath.match(/\/(js|css|fonts|assets|images|static|dist|build)\//i) ||
-        requestPath.match(/\.(min\.)?(js|css)(\?|$)/i) ||
-        requestPath.includes('/themes/') ||
-        requestPath.includes('/plugins/') ||
-        requestPath.includes('/cache/') ||
-        requestPath.includes('/autoptimize');
-
-      console.log('📄 Is Asset:', isAssetRequest);
-
-      // ✅ For asset files, serve directly without HTML processing
-      if (isAssetRequest || (!contentType.includes('text/html') && !contentType.includes('application/xhtml'))) {
-        console.log('📦 Asset detected, serving directly without HTML processing');
-
-        const buffer = await response.buffer();
-        await page.close();
-
-        res.setHeader('Content-Type', contentType);
-        res.setHeader('Access-Control-Allow-Origin', '*');
-
-        if (contentType.includes('javascript') || contentType.includes('css') || isAssetRequest) {
-          res.setHeader('Cache-Control', 'public, max-age=31536000');
-        }
-
-        return res.send(buffer);
-      }
-
-      // Verify cookies were set
-      const actualCookies = await page.cookies();
-      console.log('🔍 Cookies in browser:', actualCookies.length);
-
-    } catch (error) {
-      console.error('❌ Page load failed:', error.message);
-
-      // Try to get partial content anyway
-      console.log('🔄 Attempting to get partial content...');
       try {
-        const content = await page.content();
-        if (content && content.length > 100) {
-          console.log('✅ Got partial content, proceeding...');
-        } else {
+        response = await page.goto(targetUrl, {
+          waitUntil: 'domcontentloaded',
+          timeout: 8000
+        });
+        await page.waitForTimeout(300);
+        console.log('✅ [STORYBLOCKS] Loaded fast');
+      } catch (error) {
+        console.log('⚠️ [STORYBLOCKS] Timeout - continuing anyway');
+      }
+    } else {
+      // ALL OTHER PRODUCTS: Original safe loading
+      try {
+        response = await page.goto(targetUrl, {
+          waitUntil: 'networkidle2',
+          timeout: 30000
+        });
+      } catch (error) {
+        console.error('❌ Page load failed:', error.message);
+        console.log('🔄 Attempting to get partial content...');
+        try {
+          const content = await page.content();
+          if (content && content.length > 100) {
+            console.log('✅ Got partial content, proceeding...');
+          } else {
+            throw error;
+          }
+        } catch (contentError) {
           throw error;
         }
-      } catch (contentError) {
-        throw error;
       }
     }
+
+    console.log('✅ Page loaded WITH COOKIES');
+    console.log('📊 Response status:', response?.status());
+    console.log('📊 Response URL:', response?.url());
+
+
+
+    // ✅ Get content type FIRST
+    const contentType = response.headers()['content-type'] || '';
+    console.log('📄 Content-Type:', contentType);
+
+    // ✅ Check if this is an asset request
+    const isAssetRequest =
+      /\.(js|css|jpg|jpeg|png|gif|webp|svg|woff|woff2|ttf|eot|ico|json|map)(\?.*)?$/i.test(requestPath) ||
+      requestPath.includes('/wp-content/') ||
+      requestPath.includes('/wp-includes/') ||
+      requestPath.includes('/uploads/') ||
+      requestPath.match(/\/(js|css|fonts|assets|images|static|dist|build)\//i) ||
+      requestPath.match(/\.(min\.)?(js|css)(\?|$)/i) ||
+      requestPath.includes('/themes/') ||
+      requestPath.includes('/plugins/') ||
+      requestPath.includes('/cache/') ||
+      requestPath.includes('/autoptimize');
+
+    console.log('📄 Is Asset:', isAssetRequest);
+
+    // ✅ For asset files, serve directly without HTML processing
+    if (isAssetRequest || (!contentType.includes('text/html') && !contentType.includes('application/xhtml'))) {
+      console.log('📦 Asset detected, serving directly without HTML processing');
+
+      const buffer = await response.buffer();
+      await page.close();
+
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Access-Control-Allow-Origin', '*');
+
+      if (contentType.includes('javascript') || contentType.includes('css') || isAssetRequest) {
+        res.setHeader('Cache-Control', 'public, max-age=31536000');
+      }
+
+      return res.send(buffer);
+    }
+
+    // Verify cookies were set
+    const actualCookies = await page.cookies();
+    console.log('🔍 Cookies in browser:', actualCookies.length);
+
+
 
     // Get page content
     let html = await page.content();
@@ -773,33 +795,87 @@ export async function proxyAssetWithPuppeteer(req, res, productConfig, assetDoma
     // ✅ ENABLE INTERCEPTION FIRST
     await page.setRequestInterception(true);
 
-    // ✅ THEN SETUP REQUEST HANDLER
+    // ✅ ENHANCED BLOCKING LIST - Add these patterns
     page.on('request', (request) => {
       const url = request.url();
+      const resourceType = request.resourceType();
 
-      if (
-        url.includes('bat.bing.com') ||
-        url.includes('bat.bing.net') ||
-        url.includes('google-analytics.com') ||
-        url.includes('googletagmanager.com') ||
-        url.includes('doubleclick.net') ||
-        url.includes('facebook.com/tr') ||
-        url.includes('connect.facebook.net') ||
-        url.includes('clarity.ms') ||
-        url.includes('hotjar.com') ||
-        url.includes('hotjar.io') ||
-        url.includes('metrics.hotjar.io') ||
-        url.includes('cdn.onetrust.com') ||
-        url.includes('cookielaw.org') ||
-        url.includes('sentry.io')
-      ) {
-        console.log('🚫 BLOCKED:', url);
+      const blockedPatterns = [
+        'bat.bing.com',
+        'bat.bing.net',
+        'google-analytics.com',
+        'googletagmanager.com',
+        'doubleclick.net',
+        'facebook.com/tr',
+        'connect.facebook.net',
+        'clarity.ms',
+        'hotjar.com',
+        'hotjar.io',
+        'metrics.hotjar.io',
+        'vars.hotjar.com',
+        'script.hotjar.com',
+        'static.hotjar.com',
+        'analytics.tiktok.com',
+        'sentry.io',
+        'cdn.onetrust.com',
+        'cookielaw.org',
+        'geotrust.com',
+        'otBannerSdk.js',
+        'otSDKStub.js',
+        'OneTrust',
+        'onetrust',
+        'js.hs-scripts.com',
+        'hs-analytics',
+        'hs-banner',
+        '/actions_tkcdp',
+        '/actionp/',
+        'tt.co',
+        'facebook.net',
+        'seoab.io',
+        'collections.min.js',
+      ];
+
+      // Check if URL matches any blocked pattern
+      if (blockedPatterns.some(pattern => url.includes(pattern))) {
+        console.log(`🚫 Blocked: ${url.substring(0, 60)}`);
         return request.abort('blockedbyclient');
-      } else {
-        return request.continue();
       }
-    });
 
+      // ✅ STORYBLOCKS-SPECIFIC: Extra aggressive blocking
+      if (productConfig.name === 'storyblocks') {
+        const storyblocksBlocked = [
+          'segment.com',
+          'segment.io',
+          'cdn.segment.com',
+          'amplitude.com',
+          'fullstory.com',
+          'newrelic.com',
+          'nr-data.net',
+          'cloudflareinsights.com',
+          '/beacon',
+          '/track',
+        ];
+
+        if (storyblocksBlocked.some(pattern => url.includes(pattern))) {
+          console.log(`🚫 [SB] Blocked: ${url.substring(0, 60)}`);
+          return request.abort('blockedbyclient');
+        }
+
+        // Block heavy media during initial page load
+        if (resourceType === 'media' || resourceType === 'video') {
+          console.log(`🚫 [SB] Blocked ${resourceType}`);
+          return request.abort('blockedbyclient');
+        }
+      }
+
+      // ✅ Block beacon/ping for all products
+      if (resourceType === 'beacon' || resourceType === 'ping') {
+        console.log(`🚫 Blocked ${resourceType}: ${url.substring(0, 60)}`);
+        return request.abort('blockedbyclient');
+      }
+
+      return request.continue();
+    });
     // Set cookies
     const puppeteerCookies = cookiesArray.map(cookie => ({
       name: cookie.name,
