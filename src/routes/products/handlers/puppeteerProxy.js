@@ -104,12 +104,11 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
     // ✅ CRITICAL FIX: ENABLE INTERCEPTION FIRST!
     await page.setRequestInterception(true);
 
-    // ✅ THEN SETUP REQUEST HANDLER
+    // ✅ ENHANCED BLOCKING LIST - Add these patterns
     page.on('request', (request) => {
       const url = request.url();
       const resourceType = request.resourceType();
 
-      // ✅ AGGRESSIVE BLOCKING: Block analytics and tracking
       const blockedPatterns = [
         'bat.bing.com',
         'bat.bing.net',
@@ -127,16 +126,22 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
         'static.hotjar.com',
         'analytics.tiktok.com',
         'sentry.io',
-        'cdn.onetrust.com',
-        'cookielaw.org',
+        'cdn.onetrust.com',          // ✅ Already there
+        'cookielaw.org',              // ✅ Already there
         'geotrust.com',
-        'otBannerSdk.js',
-        'js.hs-scripts.com',
+        'otBannerSdk.js',             // ✅ Already there - but add more variants
+        'otSDKStub.js',               // ✅ ADD THIS
+        'OneTrust',                   // ✅ ADD THIS
+        'onetrust',                   // ✅ ADD THIS
+        'js.hs-scripts.com',          // ✅ Already there (HubSpot)
+        'hs-analytics',               // ✅ ADD THIS
+        'hs-banner',                  // ✅ ADD THIS
         '/actions_tkcdp',
         '/actionp/',
         'tt.co',
         'facebook.net',
-        'Meta Pixel'
+        'seoab.io',                   // ✅ ADD THIS - blocking the failed domain
+        'collections.min.js',         // ✅ ADD THIS - optional, if you want to block Flaticon's collection JS entirely
       ];
 
       // Check if URL matches any blocked pattern
@@ -433,9 +438,18 @@ export async function proxyWithPuppeteer(req, res, productConfig) {
 <script>
 (function() {
   console.log('🍪 Setting cookies IMMEDIATELY...');
+  
+  // ✅ STUB: Prevent OneTrust errors
+  window.OneTrust = window.OneTrust || { TenantFeatures: {} };
+  window.OnetrustActiveGroups = ',C0001,C0002,C0003,C0004,';
+  
+  // ✅ STUB: Prevent collections.js errors
+  window.__FLATICON_USER__ = window.__FLATICON_USER__ || { bookmarks: [] };
+  
   ${puppeteerCookies.map(cookie =>
       `document.cookie = '${cookie.name}=${cookie.value}; path=/; samesite=Lax';`
     ).join('\n  ')}
+  
   console.log('✅ Cookies set BEFORE page render!');
 })();
 </script>`;
